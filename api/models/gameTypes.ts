@@ -12,6 +12,20 @@ export interface Card {
   code: string; // Unique identifier for frontend
 }
 
+export type CardType = 
+    | 'SINGLE' 
+    | 'PAIR' 
+    | 'TRIPLET' 
+    | 'QUAD'
+    | 'STRAIGHT' 
+    | 'CONSECUTIVE_PAIRS';
+
+export interface HandPattern {
+    type: CardType;
+    rank: number;
+    length: number;
+}
+
 export interface GameState {
   roomId: string;
   deck: Card[]; // Remaining cards (for digging)
@@ -20,8 +34,11 @@ export interface GameState {
   phase: 'BIDDING' | 'PLAYING' | 'FINISHED';
   bidScore: number;
   diggerId: string | null;
+  biddingStarterId: string;
+  passCount: number;
   lastMove: {
     playerId: string;
     cards: Card[];
+    pattern: HandPattern;
   } | null;
 }

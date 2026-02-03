@@ -25,6 +25,7 @@ export default defineConfig({
     tsconfigPaths(),
   ],
   server: {
+    host: '0.0.0.0', // Allow external access
     proxy: {
       '/api': {
         target: 'http://localhost:3001',
@@ -41,6 +42,13 @@ export default defineConfig({
             console.log('Received Response from the Target:', proxyRes.statusCode, req.url);
           });
         },
+      }
+      ,
+      '/ws': {
+        target: 'ws://localhost:3001',
+        ws: true,
+        changeOrigin: true,
+        secure: false,
       }
     }
   }

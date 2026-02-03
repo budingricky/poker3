@@ -3,7 +3,7 @@
  */
 import app from './app.js';
 import { createServer } from 'http';
-import { Server } from 'socket.io';
+import { socketService } from './services/socketService.js';
 
 /**
  * start server with port
@@ -11,30 +11,11 @@ import { Server } from 'socket.io';
 const PORT = process.env.PORT || 3001;
 
 const httpServer = createServer(app);
-const io = new Server(httpServer, {
-  cors: {
-    origin: '*',
-    methods: ['GET', 'POST']
-  }
-});
 
-io.on('connection', (socket) => {
-  console.log('A user connected:', socket.id);
+// Initialize WebSocket Server
+socketService.init(httpServer);
 
-  socket.on('join_room', (roomId) => {
-    socket.join(roomId);
-    console.log(`User ${socket.id} joined room ${roomId}`);
-  });
-
-  socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
-  });
-});
-
-// Export io instance if needed
-export { io };
-
-httpServer.listen(PORT, () => {
+httpServer.listen(Number(PORT), '0.0.0.0', () => {
   console.log(`Server ready on port ${PORT}`);
 });
 
