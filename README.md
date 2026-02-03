@@ -40,6 +40,7 @@ npm run dev
 ## 构建 Android 应用 (APK)
 
 本项目包含完整的 Android 项目源码，位于 `android/` 目录下。该应用内置了 Ktor 服务器和 React 前端静态资源。
+该服务器会通过 Android NSD/mDNS 注册 `poker3`（可通过 `http://poker3.local` 或 `http://poker3.local:8080` 访问，端口取决于系统权限）。
 
 ### 步骤
 
@@ -52,7 +53,7 @@ npm run dev
 2. **复制静态资源**：
    (如果使用提供的脚本，此步骤已自动完成。否则需手动复制)
    ```bash
-   cp -r dist/* android/app/src/main/assets/
+   cp -r dist/* android/app/src/main/assets/web/
    ```
 
 3. **使用 Android Studio 打开**：
@@ -73,10 +74,29 @@ npm run dev
 4. 应用会显示当前的 IP 地址（例如 `http://192.168.1.5:8080`）。
 5. 其他玩家（包括房主自己）在浏览器输入该地址即可进入游戏大厅。
 
+## 移动客户端（Expo / EAS）
+
+本项目提供一个独立的手机客户端（内置 WebView），会优先通过 `poker3.local` 自动发现局域网中的服务器，并直接打开服务器提供的网页 UI。
+
+目录：`apps/mobile-client`
+
+### EAS 云打包
+
+在 `apps/mobile-client` 目录执行：
+
+```bash
+npm i -g eas-cli
+eas login
+eas build -p android --profile preview
+eas build -p ios --profile preview
+```
+
 ## 游戏规则
 
-1. 4人游戏，使用一副牌（54张）。
-2. 每人发12张牌，留6张底牌。
-3. 叫分最高的玩家成为"坑主"，拿走底牌并先出牌。
-4. 其他三位玩家联手对抗坑主。
-5. 先出完牌的一方获胜。
+当前实现规则（以代码为准）：
+
+1. 使用一副扑克牌，去掉大小王，共 52 张牌；4 人局，每人 12 张，底牌 4 张。
+2. 叫分 1~4，逆时针一轮，最高分为坑主；有人叫 4 分直接成为坑主；无人叫分则默认“最小红心牌持有者”烂挖（1 分）。
+3. 必挖：手牌含四个 3 / 三个 3 / 两个 3+红心 4，则轮到该玩家叫分时强制 4 分挖。
+4. 底牌先亮出，坑主必须点击“收底牌”后加入手牌；红心 4 持有者先出。
+5. 点数大小：3>2>A>K>Q>J>10>9>8>7>6>5>4；相同牌型才可比较大小；先出完牌的一方获胜（坑主方 vs 其余三人）。
