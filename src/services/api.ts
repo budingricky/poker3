@@ -67,6 +67,15 @@ export const api = {
     });
     return res.json();
   },
+  takeHole: async (roomId: string, playerId: string) => {
+    const res = await fetch(`${API_BASE}/room/take_hole`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify({ roomId, playerId })
+    });
+    return res.json();
+  },
   playCards: async (roomId: string, playerId: string, cards: string[]) => {
     const res = await fetch(`${API_BASE}/room/play`, {
       method: 'POST',

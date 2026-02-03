@@ -15,6 +15,8 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
   const [selectedCards, setSelectedCards] = useState<string[]>([]);
   const [isActing, setIsActing] = useState(false);
   const [wsReadyState, setWsReadyState] = useState<number | null>(null);
+  const [holeCards, setHoleCards] = useState<any[]>([]);
+  const [settlement, setSettlement] = useState<{ winnerId: string; winnerSide?: string } | null>(null);
   const navigate = useNavigate();
   const playAreaRef = useRef<HTMLDivElement>(null);
   const myName = localStorage.getItem('playerName') || '我';
@@ -31,10 +33,23 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
       alert('房间已解散');
       navigate('/');
     };
+    const onHoleRevealed = (data: any) => {
+      setHoleCards(Array.isArray(data?.holeCards) ? data.holeCards : []);
+    };
+    const onHoleTaken = () => {
+      setHoleCards([]);
+      loadGameState();
+    };
+    const onGameOver = (data: any) => {
+      setSettlement({ winnerId: data?.winnerId, winnerSide: data?.winnerSide });
+      loadGameState();
+    };
 
     socket.on('game_update', onGameUpdate);
     socket.on('game_started', onGameUpdate);
-    socket.on('game_over', onGameUpdate);
+    socket.on('game_over', onGameOver);
+    socket.on('hole_revealed', onHoleRevealed);
+    socket.on('hole_taken', onHoleTaken);
 
     socket.on('room_closed', onRoomClosed);
 
@@ -49,8 +64,11 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
         window.clearInterval(pollId);
         socket.off('game_update', onGameUpdate);
         socket.off('game_started', onGameUpdate);
-        socket.off('game_over', onGameUpdate);
+        socket.off('game_over', onGameOver);
+        socket.off('hole_revealed', onHoleRevealed);
+        socket.off('hole_taken', onHoleTaken);
         socket.off('room_closed', onRoomClosed);
+        socket.leaveRoom(roomId);
     };
   }, [roomId, playerId, navigate]);
 
@@ -60,6 +78,11 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
     const res = await api.getGameState(roomId, playerId);
     if (res.success) {
       setGameState(res.data);
+      if (res.data?.phase === 'TAKING_HOLE') {
+        setHoleCards(Array.isArray(res.data?.holeCards) ? res.data.holeCards : []);
+      } else {
+        setHoleCards([]);
+      }
     }
     isLoadingRef.current = false;
   };
@@ -83,6 +106,22 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
       } finally {
         setIsActing(false);
       }
+  };
+
+  const handleTakeHole = async () => {
+    if (isActing) return;
+    setIsActing(true);
+    try {
+      const res = await api.takeHole(roomId, playerId);
+      if (!res.success) {
+        alert(res.error);
+      } else {
+        setHoleCards([]);
+        await loadGameState();
+      }
+    } finally {
+      setIsActing(false);
+    }
   };
 
   const handlePlay = async (cardsToPlay: string[] = selectedCards) => {
@@ -149,6 +188,23 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
       </div>
   );
 
+  const winnerName = settlement?.winnerId
+    ? (settlement.winnerId === playerId
+        ? myName
+        : (gameState.otherPlayers.find((p: any) => p.id === settlement.winnerId)?.name || '玩家'))
+    : '';
+  const isDiggerWin = settlement?.winnerSide
+    ? settlement.winnerSide === 'DIGGER'
+    : (settlement?.winnerId ? settlement.winnerId === gameState.diggerId : false);
+
+  const handleConfirmSettlement = async () => {
+    try {
+      await api.leaveRoom(roomId, playerId);
+    } catch (e) {
+    }
+    navigate('/');
+  };
+
   return (
     <div className="flex flex-col h-screen bg-[#1a472a] overflow-hidden relative select-none">
       {/* Background Pattern */}
@@ -160,7 +216,7 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
       <div className="flex justify-between p-4 z-10 text-white/90 text-sm md:text-base shadow-sm bg-black/10 backdrop-blur-sm">
         <div>
             <div className="font-bold text-lg text-yellow-100 drop-shadow-md">
-                阶段：<span className="text-white">{gameState.phase === 'BIDDING' ? '叫分' : '出牌'}</span>
+                阶段：<span className="text-white">{gameState.phase === 'BIDDING' ? '叫分' : (gameState.phase === 'TAKING_HOLE' ? '收底牌' : '出牌')}</span>
             </div>
             {gameState.diggerId && (
                 <div className="flex items-center gap-1 text-yellow-400">
@@ -216,22 +272,23 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
       </div>
 
       {/* Center Table / Last Move / Hole Cards */}
-      <div ref={playAreaRef} className="flex-grow flex flex-col items-center justify-center relative z-0">
+      <div ref={playAreaRef} className="flex-grow flex flex-col items-center justify-center relative z-0 pb-[320px] md:pb-[280px]">
          
          {/* Drop Zone Indicator (Only visible when dragging could trigger play) */}
          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
              <div className="w-full h-2/3 border-2 border-dashed border-white/10 rounded-3xl m-8"></div>
          </div>
 
-         {/* Show Hole Cards if Digging finished */}
+         {/* Hole Cards Reveal */}
          <AnimatePresence>
-         {gameState.phase !== 'BIDDING' && gameState.holeCards && (
+         {holeCards.length > 0 && (
              <motion.div 
                 initial={{ opacity: 0, y: -20 }}
                 animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
                 className="absolute top-4 flex gap-1"
              >
-                 {gameState.holeCards.map((c:any) => (
+                 {holeCards.map((c:any) => (
                      <div key={c.code} className="transform scale-75 origin-top">
                         <Card code={c.code} />
                      </div>
@@ -276,12 +333,45 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
       </div>
 
       {/* Player Hand */}
-      <div className="mt-auto relative z-20 pb-safe">
+      <div className="fixed bottom-0 left-0 right-0 z-30 bg-gradient-to-t from-black/70 to-transparent pb-safe">
+        {selectedCards.length > 0 && (
+          <div className="px-4 pt-2">
+            <div className="text-white/70 text-xs mb-2">已选牌</div>
+            <div className="flex justify-center">
+              <div className="flex -space-x-8 overflow-visible max-w-full pb-2">
+                {gameState.myHand
+                  .filter((c: any) => selectedCards.includes(c.code))
+                  .map((card: any) => (
+                    <motion.div
+                      key={card.code}
+                      layoutId={card.code}
+                      drag
+                      dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
+                      dragElastic={0.2}
+                      dragSnapToOrigin={true}
+                      onDragEnd={(e, info) => handleDragEnd(e, info, card.code)}
+                      onClick={() => toggleCard(card.code)}
+                      whileHover={{ y: -6, zIndex: 3000 }}
+                      whileDrag={{ scale: 1.05, zIndex: 3000, cursor: 'grabbing' }}
+                      className="cursor-grab active:cursor-grabbing"
+                      style={{ zIndex: 2000 }}
+                    >
+                      <div className="transform scale-75 origin-bottom">
+                        <Card code={card.code} className="shadow-2xl" />
+                      </div>
+                    </motion.div>
+                  ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Hand Cards */}
-        <div className="flex justify-center -space-x-[3.5rem] overflow-visible pb-28 pt-8 px-4 min-h-[140px]">
+        <div className="flex justify-center -space-x-[3.2rem] overflow-visible pb-2 pt-2 px-4 min-h-[110px]">
           <AnimatePresence>
-          {gameState.myHand.map((card: any, idx: number) => {
-            const isSelected = selectedCards.includes(card.code);
+          {gameState.myHand
+            .filter((c: any) => !selectedCards.includes(c.code))
+            .map((card: any, idx: number, arr: any[]) => {
             return (
                 <motion.div
                     key={card.code}
@@ -293,14 +383,13 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
                     onDragEnd={(e, info) => handleDragEnd(e, info, card.code)}
                     onClick={() => toggleCard(card.code)}
                     animate={{ 
-                        y: isSelected ? -30 : 0,
-                        zIndex: idx, // Maintain stacking order
-                        rotate: (idx - gameState.myHand.length / 2) * 2 // Fan effect
+                        y: 0,
+                        zIndex: 1000 + idx,
+                        rotate: (idx - arr.length / 2) * 2 // Fan effect
                     }}
-                    whileHover={{ y: isSelected ? -40 : -10, zIndex: 100 }}
-                    whileDrag={{ scale: 1.1, zIndex: 100, cursor: 'grabbing' }}
+                    whileHover={{ y: -10, zIndex: 3000 }}
+                    whileDrag={{ scale: 1.1, zIndex: 3000, cursor: 'grabbing' }}
                     className="cursor-grab active:cursor-grabbing origin-bottom"
-                    style={{ zIndex: idx }}
                 >
                    <Card 
                      code={card.code} 
@@ -314,7 +403,7 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
         </div>
         
         {/* Actions Bar */}
-        <div className="fixed bottom-0 left-0 right-0 z-30 flex justify-center items-end bg-gradient-to-t from-black/70 to-transparent pb-safe">
+        <div className="flex justify-center items-end pb-4">
            {gameState.currentTurn === playerId && (
                gameState.phase === 'BIDDING' ? (
                    <motion.div
@@ -329,7 +418,7 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
                      <button disabled={isActing} onClick={() => handleBid(4)} className="btn-action bg-purple-700 hover:bg-purple-800 border-2 border-purple-500 text-lg px-6 py-3 disabled:opacity-50">4分</button>
                      <button disabled={isActing} onClick={() => handleBid(0)} className="btn-action bg-slate-500 hover:bg-slate-600 border-2 border-slate-400 text-lg px-6 py-3 disabled:opacity-50">不叫</button>
                    </motion.div>
-               ) : (
+               ) : gameState.phase === 'PLAYING' ? (
                    <motion.div initial={{y: 20, opacity: 0}} animate={{y: 0, opacity: 1}} className="flex gap-4">
                      <button 
                        disabled={isActing}
@@ -346,9 +435,53 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
                         不出
                      </button>
                    </motion.div>
-               )
+               ) : null
            )}
         </div>
+
+      <AnimatePresence>
+      {gameState.phase === 'TAKING_HOLE' && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+        >
+          {gameState.diggerId === playerId ? (
+            <div className="w-full max-w-lg mx-4 rounded-3xl bg-white/95 shadow-2xl p-6">
+              <div className="text-xl font-extrabold text-slate-900 mb-3">请收底牌</div>
+              <div className="text-slate-700 mb-4">底牌必须收下，收下后将加入你的手牌。</div>
+              <div className="flex justify-center gap-2 mb-6">
+                {(holeCards.length > 0 ? holeCards : (gameState.holeCards || [])).map((c:any) => (
+                  <div key={c.code} className="transform scale-90">
+                    <Card code={c.code} />
+                  </div>
+                ))}
+              </div>
+              <button
+                disabled={isActing}
+                onClick={handleTakeHole}
+                className="w-full rounded-2xl bg-purple-700 hover:bg-purple-800 text-white font-extrabold py-4 text-xl disabled:opacity-50"
+              >
+                收底牌
+              </button>
+            </div>
+          ) : (
+            <div className="w-full max-w-lg mx-4 rounded-3xl bg-white/95 shadow-2xl p-6 text-center">
+              <div className="text-xl font-extrabold text-slate-900 mb-2">等待坑主收底牌…</div>
+              <div className="text-slate-700 mb-4">底牌收下后将自动进入出牌阶段。</div>
+              <div className="flex justify-center -space-x-8 overflow-visible">
+                {(holeCards.length > 0 ? holeCards : (gameState.holeCards || [])).map((c:any, i:number) => (
+                  <div key={c.code} className="transform scale-90" style={{ zIndex: i }}>
+                    <Card code={c.code} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </motion.div>
+      )}
+      </AnimatePresence>
       </div>
 
       <style>{`
@@ -359,6 +492,33 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
             padding-bottom: env(safe-area-inset-bottom, 20px);
         }
       `}</style>
+
+      <AnimatePresence>
+      {settlement?.winnerId && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+        >
+          <div className="w-full max-w-md mx-4 rounded-3xl bg-white/95 shadow-2xl p-6">
+            <div className="text-2xl font-extrabold text-slate-900 mb-3">本局结束</div>
+            <div className="text-slate-700 mb-2">
+              胜者：<span className="font-bold text-slate-900">{winnerName}</span>
+            </div>
+            <div className={`mb-6 font-bold ${isDiggerWin ? 'text-purple-700' : 'text-green-700'}`}>
+              胜方：{isDiggerWin ? '坑主方' : '对抗方'}
+            </div>
+            <button
+              onClick={handleConfirmSettlement}
+              className="w-full rounded-2xl bg-green-600 hover:bg-green-700 text-white font-bold py-3 text-lg"
+            >
+              返回大厅
+            </button>
+          </div>
+        </motion.div>
+      )}
+      </AnimatePresence>
     </div>
   );
 }

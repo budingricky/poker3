@@ -31,7 +31,7 @@ export interface GameState {
   deck: Card[]; // Remaining cards (for digging)
   playersHand: { [playerId: string]: Card[] };
   currentTurn: string; // playerId
-  phase: 'BIDDING' | 'PLAYING' | 'FINISHED';
+  phase: 'BIDDING' | 'TAKING_HOLE' | 'PLAYING' | 'FINISHED';
   bidScore: number;
   diggerId: string | null;
   biddingStarterId: string;

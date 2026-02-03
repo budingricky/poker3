@@ -160,17 +160,36 @@ class GameService {
   }
 
   private finalizeBidding(game: GameState) {
+      if (!game.diggerId) throw new Error('No digger selected');
+      game.phase = 'TAKING_HOLE';
+      game.passCount = 0;
+      game.lastMove = null;
+      game.currentTurn = game.diggerId;
+
+      socketService.broadcast(game.roomId, 'hole_revealed', { holeCards: game.deck });
+      socketService.broadcast(game.roomId, 'game_update');
+  }
+
+  takeHoleCards(roomId: string, playerId: string) {
+      const game = this.games.get(roomId);
+      if (!game) throw new Error('Game not found');
+      if (game.phase !== 'TAKING_HOLE') throw new Error('Not in taking hole phase');
+      if (!game.diggerId || game.diggerId !== playerId) throw new Error('Only digger can take hole cards');
+
+      const hole = game.deck || [];
+      if (hole.length > 0) {
+          const hand = game.playersHand[playerId] || [];
+          hand.push(...hole);
+          game.playersHand[playerId] = sortCards(hand);
+      }
+      game.deck = [];
+
       game.phase = 'PLAYING';
       game.passCount = 0;
-      
-      if (game.diggerId && game.deck.length > 0) {
-          const hand = game.playersHand[game.diggerId];
-          hand.push(...game.deck);
-          game.playersHand[game.diggerId] = sortCards(hand);
-      }
-
-      game.currentTurn = this.findHeart4Owner(game);
       game.lastMove = null;
+      game.currentTurn = this.findHeart4Owner(game);
+
+      socketService.broadcast(game.roomId, 'hole_taken', { diggerId: playerId });
       socketService.broadcast(game.roomId, 'game_update');
   }
 
@@ -326,7 +345,7 @@ class GameService {
       bidScore: game.bidScore,
       diggerId: game.diggerId,
       lastMove: game.lastMove,
-      holeCards: game.phase !== 'BIDDING' ? game.deck : [] // Show hole cards after bidding
+      holeCards: game.phase === 'TAKING_HOLE' ? game.deck : []
     };
   }
 

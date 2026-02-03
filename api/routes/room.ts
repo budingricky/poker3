@@ -171,6 +171,21 @@ router.post('/bid', (req: Request, res: Response) => {
   }
 });
 
+// Take Hole Cards (Digger only)
+router.post('/take_hole', (req: Request, res: Response) => {
+  try {
+    const { roomId, playerId } = req.body;
+    if (!roomId || !playerId) {
+      res.status(400).json({ success: false, error: '缺少必要参数' });
+      return;
+    }
+    gameService.takeHoleCards(roomId, playerId);
+    res.json({ success: true, data: { status: 'taken' } });
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
+
 // Get room details
 router.get('/:roomId', (req: Request, res: Response) => {
   try {
