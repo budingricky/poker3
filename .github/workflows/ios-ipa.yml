@@ -33,6 +33,28 @@ jobs:
           cd "$WORKDIR"
           npx cap sync ios
 
+      - name: Validate required secrets
+        run: |
+          set -euo pipefail
+          missing=0
+          req() {
+            name="$1"
+            val="$2"
+            if [ -z "${val:-}" ]; then
+              echo "::error title=Missing secret::Secret ${name} is not set"
+              missing=1
+            fi
+          }
+          req "APPLE_TEAM_ID" "${TEAM_ID:-}"
+          req "IOS_BUNDLE_ID" "${BUNDLE_ID:-}"
+          req "IOS_CERT_P12_BASE64" "${{ secrets.IOS_CERT_P12_BASE64 }}"
+          req "IOS_CERT_PASSWORD" "${{ secrets.IOS_CERT_PASSWORD }}"
+          req "IOS_PROVISIONING_PROFILE_BASE64" "${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}"
+          req "KEYCHAIN_PASSWORD" "${{ secrets.KEYCHAIN_PASSWORD }}"
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
       - name: Setup signing (p12 + provisioning profile)
         env:
           IOS_CERT_P12_BASE64: ${{ secrets.IOS_CERT_P12_BASE64 }}
@@ -45,14 +67,22 @@ jobs:
           PROFILE_PATH="$RUNNER_TEMP/profile.mobileprovision"
           KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
 
-          echo "$IOS_CERT_P12_BASE64" | base64 --decode > "$CERT_P12_PATH"
-          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
+          decode_b64() {
+            if base64 --help 2>&1 | grep -q -- '--decode'; then
+              base64 --decode
+            else
+              base64 -D
+            fi
+          }
+          echo "$IOS_CERT_P12_BASE64" | decode_b64 > "$CERT_P12_PATH"
+          echo "$IOS_PROVISIONING_PROFILE_BASE64" | decode_b64 > "$PROFILE_PATH"
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security import "$CERT_P12_PATH" -P "$IOS_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/"
@@ -110,7 +140,14 @@ jobs:
           IPA_PATH="$(ls -1 "$RUNNER_TEMP/ipa/"*.ipa | head -n 1)"
           KEY_JSON="$RUNNER_TEMP/appstore_api_key.json"
           KEY_P8="$RUNNER_TEMP/AuthKey.p8"
-          echo "$APPSTORE_API_KEY_P8_BASE64" | base64 --decode > "$KEY_P8"
+          decode_b64() {
+            if base64 --help 2>&1 | grep -q -- '--decode'; then
+              base64 --decode
+            else
+              base64 -D
+            fi
+          }
+          echo "$APPSTORE_API_KEY_P8_BASE64" | decode_b64 > "$KEY_P8"
 
           KEY_P8_PATH="$KEY_P8" KEY_JSON_PATH="$KEY_JSON" python3 - <<'PY'
 import json, os
