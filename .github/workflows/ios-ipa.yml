@@ -112,6 +112,45 @@ jobs:
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
           echo "PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
           echo "PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
+          echo "PBXPROJ_PATH=$GITHUB_WORKSPACE/client/app/ios/App/App.xcodeproj/project.pbxproj" >> "$GITHUB_ENV"
+
+      - name: Patch Xcode project signing (App target only)
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re
+          path = os.environ["PBXPROJ_PATH"]
+          team = os.environ["TEAM_ID"]
+          bundle = os.environ["BUNDLE_ID"]
+          profile_name = os.environ["PROFILE_NAME"]
+
+          with open(path, "r", encoding="utf-8") as f:
+            data = f.read()
+
+          data = data.replace("ProvisioningStyle = Automatic;", "ProvisioningStyle = Manual;")
+
+          def patch_block(m: re.Match) -> str:
+            before = m.group(1)
+            indent = m.group(2)
+            after = m.group(3)
+            insertion = (
+              f"{indent}CODE_SIGN_STYLE = Manual;\\n"
+              f"{indent}CODE_SIGN_IDENTITY = \\\"Apple Distribution\\\";\\n"
+              f"{indent}DEVELOPMENT_TEAM = {team};\\n"
+              f"{indent}PRODUCT_BUNDLE_IDENTIFIER = {bundle};\\n"
+              f"{indent}PROVISIONING_PROFILE_SPECIFIER = \\\"{profile_name}\\\";\\n"
+            )
+            return before + insertion + after
+
+          pattern = re.compile(r"(\\bbuildSettings\\s*=\\s*\\{[\\s\\S]*?)(\\t\\t\\t\\t)CODE_SIGN_STYLE\\s*=\\s*Automatic;\\n([\\s\\S]*?\\n\\t\\t\\t\\};)", re.M)
+          data2, n = pattern.subn(patch_block, data)
+          if n == 0:
+            raise SystemExit("Failed to patch CODE_SIGN_STYLE in pbxproj")
+          data = data2
+
+          with open(path, "w", encoding="utf-8") as f:
+            f.write(data)
+          PY
 
       - name: Install CocoaPods
         run: |
@@ -139,10 +178,6 @@ jobs:
             -archivePath "$RUNNER_TEMP/App.xcarchive" \
             PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
             DEVELOPMENT_TEAM="$TEAM_ID" \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY='Apple Distribution' \
-            PROVISIONING_PROFILE="$PROFILE_UUID" \
-            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
             OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN_PATH" \
             MARKETING_VERSION="$VERSION" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
