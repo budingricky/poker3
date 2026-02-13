@@ -190,8 +190,9 @@ jobs:
           if [ -n "$CERT_NAME" ]; then
             echo "Using certificate: $CERT_NAME"
             
-            # 使用自动签名 + 指定证书 + allowProvisioningUpdates
-            # 这样 Xcode 会自动处理 development team，同时使用我们提供的证书
+            # 使用纯自动签名 - 不要指定 CODE_SIGN_IDENTITY
+            # Xcode 会自动从 keychain 中找到合适的证书
+            # 这样可以避免签名设置冲突
             xcodebuild -workspace App.xcworkspace \
               -scheme App \
               -configuration Release \
@@ -199,7 +200,6 @@ jobs:
               -destination 'generic/platform=iOS' \
               -archivePath "$RUNNER_TEMP/App.xcarchive" \
               OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN_PATH" \
-              CODE_SIGN_IDENTITY="$CERT_NAME" \
               CODE_SIGN_STYLE="Automatic" \
               DEVELOPMENT_TEAM="$TEAM_ID" \
               PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
