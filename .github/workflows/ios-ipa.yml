@@ -57,8 +57,10 @@ jobs:
           req "IOS_BUNDLE_ID" "${BUNDLE_ID:-}"
           req "IOS_CERT_P12_BASE64" "${{ secrets.IOS_CERT_P12_BASE64 }}"
           req "IOS_CERT_PASSWORD" "${{ secrets.IOS_CERT_PASSWORD }}"
-          req "IOS_PROVISIONING_PROFILE_BASE64" "${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}"
           req "KEYCHAIN_PASSWORD" "${{ secrets.KEYCHAIN_PASSWORD }}"
+          req "APPSTORE_ISSUER_ID" "${{ secrets.APPSTORE_ISSUER_ID }}"
+          req "APPSTORE_KEY_ID" "${{ secrets.APPSTORE_KEY_ID }}"
+          req "APPSTORE_API_KEY_P8_BASE64" "${{ secrets.APPSTORE_API_KEY_P8_BASE64 }}"
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
@@ -67,7 +69,6 @@ jobs:
         env:
           IOS_CERT_P12_BASE64: ${{ secrets.IOS_CERT_P12_BASE64 }}
           IOS_CERT_PASSWORD: ${{ secrets.IOS_CERT_PASSWORD }}
-          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           set -euo pipefail
@@ -77,8 +78,6 @@ jobs:
           CERT_CRT_CLEAN_PATH="$RUNNER_TEMP/cert.clean.pem"
           CERT_KEY_CLEAN_PATH="$RUNNER_TEMP/key.clean.pem"
           CERT_KEY_TRAD_PATH="$RUNNER_TEMP/key.traditional.pem"
-          PROFILE_PATH="$RUNNER_TEMP/profile.mobileprovision"
-          PROFILE_PLIST_PATH="$RUNNER_TEMP/profile.plist"
           KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
 
           decode_b64() {
@@ -89,7 +88,6 @@ jobs:
             fi
           }
           printf '%s' "$IOS_CERT_P12_BASE64" | decode_b64 > "$CERT_P12_PATH"
-          printf '%s' "$IOS_PROVISIONING_PROFILE_BASE64" | decode_b64 > "$PROFILE_PATH"
 
           openssl pkcs12 -in "$CERT_P12_PATH" -passin "pass:$IOS_CERT_PASSWORD" -info -noout >/dev/null
           openssl pkcs12 -in "$CERT_P12_PATH" -passin "pass:$IOS_CERT_PASSWORD" -clcerts -nokeys -out "$CERT_CRT_PATH" >/dev/null
@@ -111,101 +109,32 @@ jobs:
           security list-keychain -d user -s "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
-          security cms -D -i "$PROFILE_PATH" > "$PROFILE_PLIST_PATH"
-          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$PROFILE_PLIST_PATH")
-          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print :Name' "$PROFILE_PLIST_PATH")
-          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.mobileprovision"
-
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
-          echo "PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
-          echo "PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
-          echo "PBXPROJ_PATH=$GITHUB_WORKSPACE/client/app/ios/App/App.xcodeproj/project.pbxproj" >> "$GITHUB_ENV"
 
       - name: Signing debug
         run: |
           set -euo pipefail
           echo "Keychain: $KEYCHAIN_PATH"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
-          echo "Provisioning Profiles dir:"
-          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles" || true
-          if [ -n "${PROFILE_UUID:-}" ] && [ -f "$HOME/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.mobileprovision" ]; then
-            security cms -D -i "$HOME/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.mobileprovision" > "$RUNNER_TEMP/profile_debug.plist"
-            echo "Profile Name:"
-            /usr/libexec/PlistBuddy -c 'Print :Name' "$RUNNER_TEMP/profile_debug.plist" || true
-            echo "Profile TeamIdentifier:"
-            /usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$RUNNER_TEMP/profile_debug.plist" || true
-            echo "Profile Entitlements application-identifier:"
-            /usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$RUNNER_TEMP/profile_debug.plist" || true
-          fi
-
-      - name: Patch Xcode project signing (App target only)
+      - name: Setup App Store Connect API key (for Xcode)
+        env:
+          APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+          APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+          APPSTORE_API_KEY_P8_BASE64: ${{ secrets.APPSTORE_API_KEY_P8_BASE64 }}
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import os, re
-
-          path = os.environ["PBXPROJ_PATH"]
-          team = os.environ["TEAM_ID"]
-          bundle = os.environ["BUNDLE_ID"]
-          profile_name = os.environ["PROFILE_NAME"]
-
-          with open(path, "r", encoding="utf-8") as f:
-            data = f.read()
-
-          data = data.replace("ProvisioningStyle = Automatic;", "ProvisioningStyle = Manual;")
-
-          def strip_key(s: str, key: str) -> str:
-            return re.sub(rf"^[ \t]*{re.escape(key)}[ \t]*=[^;]*;\s*\n?", "", s, flags=re.M)
-
-          def patch_build_settings(body: str) -> str:
-            if "INFOPLIST_FILE = App/Info.plist;" not in body:
-              return body
-
-            indent_match = re.search(r"^(\s+)\w+\s*=\s*[^;]+;\s*$", body, flags=re.M)
-            indent = indent_match.group(1) if indent_match else "\t\t\t\t"
-
-            for k in [
-              "CODE_SIGN_STYLE",
-              "CODE_SIGN_IDENTITY",
-              "DEVELOPMENT_TEAM",
-              "PRODUCT_BUNDLE_IDENTIFIER",
-              "PROVISIONING_PROFILE_SPECIFIER",
-              "PROVISIONING_PROFILE",
-            ]:
-              body = strip_key(body, k)
-
-            insert = (
-              f"{indent}CODE_SIGN_STYLE = Manual;\n"
-              f"{indent}CODE_SIGN_IDENTITY = \"Apple Distribution\";\n"
-              f"{indent}DEVELOPMENT_TEAM = {team};\n"
-              f"{indent}PRODUCT_BUNDLE_IDENTIFIER = {bundle};\n"
-              f"{indent}PROVISIONING_PROFILE_SPECIFIER = \"{profile_name}\";\n"
-            )
-
-            body = body.rstrip() + "\n" + insert
-            if not body.endswith("\n"):
-              body += "\n"
-            return body
-
-          pattern = re.compile(r"(buildSettings\s*=\s*\{\n)([\s\S]*?)(\n\s*\};)", re.M)
-          stats = {"count": 0}
-
-          def repl(m: re.Match) -> str:
-            head, body, tail = m.group(1), m.group(2), m.group(3)
-            new_body = patch_build_settings(body)
-            if new_body != body:
-              stats["count"] += 1
-            return head + new_body + tail
-
-          data = pattern.sub(repl, data)
-
-          if stats["count"] == 0:
-            raise SystemExit("Failed to patch App build settings in pbxproj (INFOPLIST_FILE match not found)")
-
-          with open(path, "w", encoding="utf-8") as f:
-            f.write(data)
-          PY
+          decode_b64() {
+            if base64 --help 2>&1 | grep -q -- '--decode'; then
+              base64 --decode
+            else
+              base64 -D
+            fi
+          }
+          KEY_P8="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$APPSTORE_API_KEY_P8_BASE64" | decode_b64 > "$KEY_P8"
+          echo "XCODE_AUTH_KEY_PATH=$KEY_P8" >> "$GITHUB_ENV"
+          echo "XCODE_AUTH_KEY_ID=$APPSTORE_KEY_ID" >> "$GITHUB_ENV"
+          echo "XCODE_AUTH_ISSUER_ID=$APPSTORE_ISSUER_ID" >> "$GITHUB_ENV"
 
       - name: Install CocoaPods
         run: |
@@ -235,9 +164,14 @@ jobs:
             -archivePath "$RUNNER_TEMP/App.xcarchive" \
             PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
             DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
             OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN_PATH" \
             MARKETING_VERSION="$VERSION" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$XCODE_AUTH_KEY_PATH" \
+            -authenticationKeyID "$XCODE_AUTH_KEY_ID" \
+            -authenticationKeyIssuerID "$XCODE_AUTH_ISSUER_ID" \
             archive
 
       - name: Export IPA
@@ -286,6 +220,10 @@ jobs:
             -archivePath "$RUNNER_TEMP/App.xcarchive" \
             -exportPath "$RUNNER_TEMP/ipa" \
             -exportOptionsPlist "$EXPORT_PLIST" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$XCODE_AUTH_KEY_PATH" \
+            -authenticationKeyID "$XCODE_AUTH_KEY_ID" \
+            -authenticationKeyIssuerID "$XCODE_AUTH_ISSUER_ID" \
             -verbose
 
       - name: Install fastlane
