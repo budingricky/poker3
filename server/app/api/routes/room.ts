@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import { roomService } from '../services/roomService.js';
 import { gameService } from '../services/gameService.js';
 import { socketService } from '../services/socketService.js';
+import { RoomStatus } from '../models/types.js';
 
 const router = express.Router();
 
@@ -31,6 +32,36 @@ router.post('/start', (req: Request, res: Response) => {
     res.status(400).json({ success: false, error: error.message });
   }
 });
+
+// Next round ready / restart
+router.post('/next_round', (req: Request, res: Response) => {
+  try {
+    const { roomId, playerId } = req.body
+    if (!roomId || !playerId) {
+      res.status(400).json({ success: false, error: '缺少必要参数' })
+      return
+    }
+    gameService.markNextRoundReady(roomId, playerId)
+    res.json({ success: true, data: { status: 'ready' } })
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: error.message })
+  }
+})
+
+// Set settlement multiplier (host only)
+router.post('/settlement_multiplier', (req: Request, res: Response) => {
+  try {
+    const { roomId, playerId, multiplier } = req.body
+    if (!roomId || !playerId || multiplier === undefined) {
+      res.status(400).json({ success: false, error: '缺少必要参数' })
+      return
+    }
+    gameService.setSettlementMultiplier(roomId, playerId, Number(multiplier))
+    res.json({ success: true, data: { status: 'ok' } })
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: error.message })
+  }
+})
 
 // Get Game State (for player)
 router.get('/:roomId/game/:playerId', (req: Request, res: Response) => {
@@ -77,6 +108,10 @@ router.post('/join', (req: Request, res: Response) => {
     }
 
     const result = roomService.joinRoom(roomId, playerName, playerId);
+    try {
+      gameService.handlePlayerJoined(roomId);
+    } catch {
+    }
     socketService.broadcast(roomId, 'room_update');
     socketService.broadcastLobby('room_update');
     res.json({ success: true, data: result });
@@ -95,6 +130,18 @@ router.post('/leave', (req: Request, res: Response) => {
     }
     
     const result = roomService.removePlayer(roomId, playerId);
+    try {
+      gameService.handlePlayerLeft(roomId, playerId);
+      if (result.roomDeleted) gameService.handleRoomDeleted(roomId);
+    } catch {
+    }
+    try {
+      const room = roomService.getRoom(roomId)
+      if (room && room.status === RoomStatus.FINISHED) {
+        gameService.resetRoomToWaiting(roomId)
+      }
+    } catch {
+    }
     if (!result.roomDeleted) {
         socketService.broadcast(roomId, 'room_update');
     }
@@ -115,6 +162,10 @@ router.post('/close', (req: Request, res: Response) => {
     }
 
     roomService.closeRoom(roomId, playerId);
+    try {
+      gameService.handleRoomDeleted(roomId);
+    } catch {
+    }
     socketService.broadcast(roomId, 'room_closed'); // Broadcast to all clients in room
     socketService.broadcastLobby('room_update');
     res.json({ success: true, data: { closed: true } });
@@ -138,6 +189,21 @@ router.post('/play', (req: Request, res: Response) => {
     res.status(400).json({ success: false, error: error.message });
   }
 });
+
+// Undo last play (only before others act)
+router.post('/undo', (req: Request, res: Response) => {
+  try {
+    const { roomId, playerId } = req.body
+    if (!roomId || !playerId) {
+      res.status(400).json({ success: false, error: '缺少必要参数' })
+      return
+    }
+    gameService.undoLastMove(roomId, playerId)
+    res.json({ success: true, data: { status: 'undone' } })
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: error.message })
+  }
+})
 
 // Pass
 router.post('/pass', (req: Request, res: Response) => {

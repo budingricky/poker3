@@ -7,6 +7,44 @@ import { analyzeHand, canBeat, sortCards, getCompareValue } from './gameLogic.js
 class GameService {
   private games: Map<string, GameState> = new Map();
   private lastWinnerByRoom: Map<string, string> = new Map();
+  private nextRoundReadyByRoom: Map<string, Set<string>> = new Map();
+  private pendingSettlementByRoom: Map<
+    string,
+    {
+      round: number
+      bidScore: number
+      diggerId: string | null
+      winnerId: string
+      winnerSide: 'DIGGER' | 'OTHERS'
+      baseResults: Array<{ playerId: string; name: string; baseDelta: number; isWinner: boolean }>
+      createdAt: number
+    }
+  > = new Map()
+  private settlementMultiplierByRoom: Map<string, number | null> = new Map()
+  private settlementHistoryByRoom: Map<
+    string,
+    Array<{
+      round: number
+      bidScore: number
+      multiplier?: number
+      diggerId: string | null
+      winnerId: string
+      winnerSide: 'DIGGER' | 'OTHERS'
+      results: Array<{ playerId: string; name: string; delta: number; isWinner: boolean }>
+      createdAt: number
+    }>
+  > = new Map()
+  private undoByRoom: Map<
+    string,
+    {
+      playerId: string
+      playedCards: Card[]
+      prevLastMove: GameState['lastMove']
+      prevPassCount: number
+      prevPlayedCount: number
+      prevPlayedMoveCount: number
+    }
+  > = new Map();
 
   // ... (createDeck and shuffle methods remain same)
   createDeck(): Card[] {
@@ -37,9 +75,11 @@ class GameService {
   startGame(roomId: string): GameState {
     const room = roomService.getRoom(roomId);
     if (!room) throw new Error('房间未找到');
-    if (room.players.length < 4) throw new Error('玩家人数不足');
+    const activePlayers = room.players.filter(p => p.isOnline)
+    if (activePlayers.length < room.maxPlayers) throw new Error('玩家人数不足');
     if (room.status !== RoomStatus.WAITING) throw new Error('游戏已开始');
     if (this.games.has(roomId)) throw new Error('游戏已开始');
+    this.undoByRoom.delete(roomId);
 
     room.status = RoomStatus.PLAYING;
 
@@ -61,14 +101,18 @@ class GameService {
     // 54 - 6 = 48. 48 / 4 = 12 cards each. 6 hole cards.
     // This matches our previous logic.
     const holeCardsCount = 4;
-    const cardsPerPlayer = (deck.length - holeCardsCount) / room.players.length;
+    const cardsPerPlayer = (deck.length - holeCardsCount) / activePlayers.length;
     
     const playersHand: { [playerId: string]: Card[] } = {};
+    const playedCardsByPlayer: { [playerId: string]: Card[] } = {};
+    const playedMovesByPlayer: GameState['playedMovesByPlayer'] = {};
     let currentCardIndex = 0;
 
-    room.players.forEach(player => {
+    activePlayers.forEach(player => {
       const hand = deck.slice(currentCardIndex, currentCardIndex + cardsPerPlayer);
       playersHand[player.id] = sortCards(hand); // Sort by rank desc
+      playedCardsByPlayer[player.id] = []
+      playedMovesByPlayer[player.id] = []
       currentCardIndex += cardsPerPlayer;
       player.handCards = hand.map(c => c.code);
     });
@@ -76,12 +120,15 @@ class GameService {
     const holeCards = deck.slice(currentCardIndex);
 
     const lastWinnerId = this.lastWinnerByRoom.get(roomId);
-    const biddingStarterId = lastWinnerId && room.players.some(p => p.id === lastWinnerId) ? lastWinnerId : room.players[0].id;
+    const biddingStarterId =
+      lastWinnerId && activePlayers.some(p => p.id === lastWinnerId) ? lastWinnerId : activePlayers[0].id;
 
     const gameState: GameState = {
       roomId,
       deck: holeCards, // These are the hole cards
       playersHand,
+      playedCardsByPlayer,
+      playedMovesByPlayer,
       currentTurn: biddingStarterId,
       phase: 'BIDDING',
       bidScore: 0,
@@ -98,6 +145,24 @@ class GameService {
     socketService.broadcast(roomId, 'room_update');
 
     return gameState;
+  }
+
+  resetRoomToWaiting(roomId: string) {
+    this.games.delete(roomId)
+    this.nextRoundReadyByRoom.delete(roomId)
+    this.undoByRoom.delete(roomId)
+    this.lastWinnerByRoom.delete(roomId)
+    this.settlementHistoryByRoom.delete(roomId)
+    this.pendingSettlementByRoom.delete(roomId)
+    this.settlementMultiplierByRoom.delete(roomId)
+    const room = roomService.getRoom(roomId)
+    if (room) {
+      room.status = RoomStatus.WAITING
+      for (const p of room.players) {
+        p.handCards = []
+        p.score = 0
+      }
+    }
   }
 
   // Player calls score (1, 2, 3)
@@ -220,9 +285,22 @@ class GameService {
           }
       }
 
+      this.undoByRoom.set(roomId, {
+        playerId,
+        playedCards: [...cardsToPlay],
+        prevLastMove: game.lastMove,
+        prevPassCount: game.passCount,
+        prevPlayedCount: (game.playedCardsByPlayer?.[playerId] || []).length,
+        prevPlayedMoveCount: (game.playedMovesByPlayer?.[playerId] || []).length,
+      })
+
       // Valid play
       // Remove cards from hand
       game.playersHand[playerId] = hand.filter(c => !cardCodes.includes(c.code));
+      if (!game.playedCardsByPlayer[playerId]) game.playedCardsByPlayer[playerId] = []
+      game.playedCardsByPlayer[playerId].push(...cardsToPlay)
+      if (!game.playedMovesByPlayer[playerId]) game.playedMovesByPlayer[playerId] = []
+      game.playedMovesByPlayer[playerId].push({ cards: cardsToPlay, pattern })
       
       // Update last move
       game.lastMove = {
@@ -234,19 +312,57 @@ class GameService {
 
       // Check win
       if (game.playersHand[playerId].length === 0) {
+          this.undoByRoom.delete(roomId);
           game.phase = 'FINISHED';
           const room = roomService.getRoom(game.roomId);
           if (room) room.status = RoomStatus.FINISHED;
           this.lastWinnerByRoom.set(roomId, playerId);
           const winnerSide = game.diggerId === playerId ? 'DIGGER' : 'OTHERS';
+      if (room) {
+        const base = typeof game.bidScore === 'number' ? game.bidScore : 0
+        const othersCount = Math.max(0, room.players.length - 1)
+        const round = (this.settlementHistoryByRoom.get(roomId)?.length || 0) + 1
+        const baseResults = room.players.map(p => {
+          const isDigger = game.diggerId === p.id
+          const isWinner = winnerSide === 'DIGGER' ? isDigger : !isDigger
+          const baseDelta =
+            winnerSide === 'DIGGER'
+              ? isDigger
+                ? base * othersCount
+                : -base
+              : isDigger
+                ? -base * othersCount
+                : base
+          return { playerId: p.id, name: p.name, baseDelta, isWinner }
+        })
+        this.pendingSettlementByRoom.set(roomId, {
+          round,
+          bidScore: base,
+          diggerId: game.diggerId,
+          winnerId: playerId,
+          winnerSide,
+          baseResults,
+          createdAt: Date.now(),
+        })
+        this.settlementMultiplierByRoom.set(roomId, null)
+      }
           socketService.broadcast(game.roomId, 'game_over', { winnerId: playerId, winnerSide });
           socketService.broadcast(game.roomId, 'room_update');
           socketService.broadcastLobby('room_update');
           return;
       }
 
-      // Next turn
-      this.nextTurn(game);
+      const isMax = this.isCurrentMoveMax(game, playerId);
+      if (isMax) {
+        game.currentTurn = playerId;
+        socketService.broadcast(game.roomId, 'max_play', {
+          playerId,
+          cards: cardsToPlay,
+          pattern,
+        });
+      } else {
+        this.nextTurn(game);
+      }
       socketService.broadcast(game.roomId, 'game_update');
   }
 
@@ -254,6 +370,7 @@ class GameService {
       const game = this.games.get(roomId);
       if (!game) throw new Error('Game not found');
       if (game.currentTurn !== playerId) throw new Error('Not your turn');
+      this.undoByRoom.delete(roomId);
       
       if (!game.lastMove || game.lastMove.playerId === playerId) {
           throw new Error('Cannot pass when you have free play');
@@ -269,6 +386,35 @@ class GameService {
           game.passCount = 0;
       }
       socketService.broadcast(game.roomId, 'game_update');
+  }
+
+  undoLastMove(roomId: string, playerId: string) {
+    const game = this.games.get(roomId)
+    if (!game) throw new Error('Game not found')
+    if (game.phase !== 'PLAYING') throw new Error('Not in playing phase')
+    if (!game.lastMove || game.lastMove.playerId !== playerId) throw new Error('No undoable move')
+    if (game.passCount !== 0) throw new Error('Cannot undo after others acted')
+
+    const undo = this.undoByRoom.get(roomId)
+    if (!undo || undo.playerId !== playerId) throw new Error('No undoable move')
+
+    const hand = game.playersHand[playerId] || []
+    game.playersHand[playerId] = sortCards([...hand, ...undo.playedCards])
+    game.lastMove = undo.prevLastMove
+    game.passCount = undo.prevPassCount
+    const pile = game.playedCardsByPlayer[playerId] || []
+    if (undo.prevPlayedCount >= 0 && undo.prevPlayedCount <= pile.length) {
+      game.playedCardsByPlayer[playerId] = pile.slice(0, undo.prevPlayedCount)
+    }
+    const moves = game.playedMovesByPlayer?.[playerId] || []
+    if (undo.prevPlayedMoveCount >= 0 && undo.prevPlayedMoveCount <= moves.length) {
+      game.playedMovesByPlayer[playerId] = moves.slice(0, undo.prevPlayedMoveCount)
+    }
+    game.currentTurn = playerId
+    this.undoByRoom.delete(roomId)
+
+    socketService.broadcast(roomId, 'undo', { playerId })
+    socketService.broadcast(roomId, 'game_update')
   }
 
   private isForcedBid(hand: Card[]): boolean {
@@ -328,25 +474,249 @@ class GameService {
 
     // Return masked state similar to Node.js backend
     const room = roomService.getRoom(roomId);
+    const players = room?.players || []
+    const myIndex = players.findIndex(p => p.id === playerId)
+    const orderedOthers =
+      myIndex >= 0
+        ? Array.from({ length: Math.max(0, players.length - 1) }, (_, i) => players[(myIndex + i + 1) % players.length])
+        : players.filter(p => p.id !== playerId)
+    const winnerId = game.phase === 'FINISHED' ? this.lastWinnerByRoom.get(roomId) || null : null
+    const winnerSide =
+      winnerId && game.diggerId ? (game.diggerId === winnerId ? 'DIGGER' : 'OTHERS') : undefined
     return {
       roomId: game.roomId,
       hostId: room?.hostId,
+      roomStatus: room?.status,
+      maxPlayers: room?.maxPlayers,
+      playerCount: room?.players?.length,
+      onlineCount: room?.players?.filter(p => p.isOnline).length,
       myHand: game.playersHand[playerId] || [],
-      otherPlayers: Object.keys(game.playersHand).filter(id => id !== playerId).map(id => {
-        const player = room?.players.find(p => p.id === id);
-        return {
-            id,
-            name: player ? player.name : 'Unknown', // Use name from room player list
-            cardCount: game.playersHand[id].length
-        };
-      }),
+      myPlayedCards: game.playedCardsByPlayer?.[playerId] || [],
+      myPlayedMoves: game.playedMovesByPlayer?.[playerId] || [],
+      otherPlayers: orderedOthers
+        .filter(p => p.id !== playerId)
+        .map(p => ({
+          id: p.id,
+          name: p.name,
+          isOnline: p.isOnline,
+          cardCount: (game.playersHand[p.id] || []).length,
+        })),
       currentTurn: game.currentTurn,
       phase: game.phase,
+      passCount: game.passCount,
       bidScore: game.bidScore,
       diggerId: game.diggerId,
       lastMove: game.lastMove,
-      holeCards: game.phase === 'TAKING_HOLE' ? game.deck : []
+      winnerId,
+      winnerSide,
+      settlementMultiplier: this.settlementMultiplierByRoom.get(roomId) ?? null,
+      settlementMultiplierPending: this.pendingSettlementByRoom.has(roomId) && (this.settlementMultiplierByRoom.get(roomId) ?? null) === null,
+      holeCards: game.phase === 'TAKING_HOLE' ? game.deck : [],
+      nextRoundReady: room?.status === RoomStatus.FINISHED ? Array.from(this.nextRoundReadyByRoom.get(roomId) || []) : [],
+      settlementHistory: this.settlementHistoryByRoom.get(roomId) || [],
     };
+  }
+
+  markNextRoundReady(roomId: string, playerId: string) {
+    const room = roomService.getRoom(roomId)
+    if (!room) throw new Error('房间未找到')
+    if (room.status !== RoomStatus.FINISHED) throw new Error('当前不在结算阶段')
+    if (!room.players.some(p => p.id === playerId)) throw new Error('玩家不在房间内')
+
+    const set = this.nextRoundReadyByRoom.get(roomId) || new Set<string>()
+    set.add(playerId)
+    this.nextRoundReadyByRoom.set(roomId, set)
+
+    socketService.broadcast(roomId, 'next_round_ready', {
+      playerId,
+      readyCount: set.size,
+      totalCount: room.maxPlayers,
+      playerCount: room.players.length,
+    })
+
+    const onlineCount = room.players.filter(p => p.isOnline).length
+    if (onlineCount >= room.maxPlayers && set.size >= onlineCount) {
+      this.restartGame(roomId)
+    }
+  }
+
+  restartGame(roomId: string) {
+    const room = roomService.getRoom(roomId)
+    if (!room) throw new Error('房间未找到')
+    if (room.players.filter(p => p.isOnline).length < room.maxPlayers) throw new Error('玩家人数不足')
+    room.status = RoomStatus.WAITING
+    this.games.delete(roomId)
+    this.nextRoundReadyByRoom.delete(roomId)
+    this.undoByRoom.delete(roomId)
+    this.pendingSettlementByRoom.delete(roomId)
+    this.settlementMultiplierByRoom.delete(roomId)
+    this.startGame(roomId)
+  }
+
+  setSettlementMultiplier(roomId: string, playerId: string, multiplier: number) {
+    const room = roomService.getRoom(roomId)
+    if (!room) throw new Error('房间未找到')
+    if (room.status !== RoomStatus.FINISHED) throw new Error('当前不在结算阶段')
+    if (room.hostId !== playerId) throw new Error('仅房主可选择翻倍')
+    if (![1, 2, 4, 8].includes(multiplier)) throw new Error('无效倍数')
+
+    const pending = this.pendingSettlementByRoom.get(roomId)
+    if (!pending) throw new Error('当前无待结算的翻倍选择')
+
+    const already = this.settlementMultiplierByRoom.get(roomId)
+    if (typeof already === 'number' && already > 0) return
+
+    this.settlementMultiplierByRoom.set(roomId, multiplier)
+
+    const history = this.settlementHistoryByRoom.get(roomId) || []
+    const results = pending.baseResults.map(r => ({
+      playerId: r.playerId,
+      name: r.name,
+      delta: r.baseDelta * multiplier,
+      isWinner: r.isWinner,
+    }))
+
+    for (const p of room.players) {
+      const r = results.find(x => x.playerId === p.id)
+      if (!r) continue
+      p.score = (p.score || 0) + (Number(r.delta) || 0)
+    }
+
+    history.push({
+      round: pending.round,
+      bidScore: pending.bidScore,
+      multiplier,
+      diggerId: pending.diggerId,
+      winnerId: pending.winnerId,
+      winnerSide: pending.winnerSide,
+      results,
+      createdAt: pending.createdAt,
+    })
+    this.settlementHistoryByRoom.set(roomId, history)
+    this.pendingSettlementByRoom.delete(roomId)
+
+    socketService.broadcast(roomId, 'settlement_multiplier', { multiplier })
+    socketService.broadcast(roomId, 'room_update')
+    socketService.broadcast(roomId, 'game_update')
+    socketService.broadcastLobby('room_update')
+  }
+
+  handlePlayerLeft(roomId: string, playerId: string) {
+    const set = this.nextRoundReadyByRoom.get(roomId)
+    if (set) {
+      set.delete(playerId)
+      if (set.size === 0) this.nextRoundReadyByRoom.delete(roomId)
+      else this.nextRoundReadyByRoom.set(roomId, set)
+    }
+    const undo = this.undoByRoom.get(roomId)
+    if (undo?.playerId === playerId) this.undoByRoom.delete(roomId)
+    if (set && set.size > 0) {
+      const room = roomService.getRoom(roomId)
+      if (room) {
+        socketService.broadcast(roomId, 'next_round_ready', {
+          playerId,
+          readyCount: set.size,
+          totalCount: room.maxPlayers,
+          playerCount: room.players.length,
+        })
+      }
+    }
+  }
+
+  handlePlayerJoined(roomId: string) {
+    if (this.nextRoundReadyByRoom.has(roomId)) {
+      this.nextRoundReadyByRoom.delete(roomId)
+      const room = roomService.getRoom(roomId)
+      if (room) {
+        socketService.broadcast(roomId, 'next_round_ready', {
+          playerId: '',
+          readyCount: 0,
+          totalCount: room.maxPlayers,
+          playerCount: room.players.length,
+        })
+      }
+    }
+  }
+
+  handleRoomDeleted(roomId: string) {
+    this.games.delete(roomId)
+    this.nextRoundReadyByRoom.delete(roomId)
+    this.undoByRoom.delete(roomId)
+    this.lastWinnerByRoom.delete(roomId)
+    this.settlementHistoryByRoom.delete(roomId)
+  }
+
+  private isCurrentMoveMax(game: GameState, playerId: string) {
+    const lastMove = game.lastMove
+    if (!lastMove || lastMove.playerId !== playerId) return false
+
+    const others = Object.keys(game.playersHand).filter(pid => pid !== playerId)
+    for (const pid of others) {
+      const hand = game.playersHand[pid] || []
+      if (this.canAnyBeat(hand, lastMove)) return false
+    }
+    return true
+  }
+
+  private canAnyBeat(hand: Card[], lastMove: NonNullable<GameState['lastMove']>): boolean {
+    const p = lastMove.pattern
+    const lastRankValue = getCompareValue(p.rank)
+    const counts = new Map<number, number>()
+    for (const c of hand) counts.set(c.rank, (counts.get(c.rank) || 0) + 1)
+
+    const hasSingleAbove = () => {
+      let best = -Infinity
+      for (const rank of counts.keys()) best = Math.max(best, getCompareValue(rank))
+      return best > lastRankValue
+    }
+
+    const hasOfKindAbove = (need: number) => {
+      for (const [rank, cnt] of counts.entries()) {
+        if (cnt >= need && getCompareValue(rank) > lastRankValue) return true
+      }
+      return false
+    }
+
+    const hasStraightAbove = (len: number, needCountPerRank: number) => {
+      const minRank = 3
+      const maxRank = 13
+      for (let start = minRank; start <= maxRank - len + 1; start += 1) {
+        const end = start + len - 1
+        if (end <= p.rank) continue
+        let ok = true
+        for (let r = start; r <= end; r += 1) {
+          if ((counts.get(r) || 0) < needCountPerRank) {
+            ok = false
+            break
+          }
+        }
+        if (ok) return true
+      }
+      return false
+    }
+
+    switch (p.type) {
+      case 'SINGLE':
+        return hasSingleAbove()
+      case 'PAIR':
+        return hasOfKindAbove(2)
+      case 'TRIPLET':
+        return hasOfKindAbove(3)
+      case 'QUAD':
+        return hasOfKindAbove(4)
+      case 'STRAIGHT':
+        return hasStraightAbove(p.length, 1)
+      case 'CONSECUTIVE_PAIRS': {
+        const pairCount = p.length
+        return hasStraightAbove(pairCount, 2)
+      }
+      case 'CONSECUTIVE_TRIPLETS': {
+        const tripletCount = p.length
+        return hasStraightAbove(tripletCount, 3)
+      }
+      default:
+        return false
+    }
   }
 
   // ... (getSocketIdForPlayer stub)

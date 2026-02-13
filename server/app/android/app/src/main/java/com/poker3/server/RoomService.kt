@@ -40,7 +40,7 @@ object RoomService {
         }
 
         if (room.players.size >= room.maxPlayers) throw Exception("房间已满")
-        if (room.status != "WAITING") throw Exception("游戏已开始")
+        if (room.status == "PLAYING") throw Exception("游戏进行中，暂不可加入")
 
         val newPlayer = Player(
             id = UUID.randomUUID().toString(),

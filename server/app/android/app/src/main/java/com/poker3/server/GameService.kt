@@ -15,8 +15,8 @@ private fun getCompareValue(rank: Int): Int {
 
 private fun isStraight(ranks: List<Int>): Boolean {
     if (ranks.size < 3) return false
-    if (ranks.first() <= 4) return false
-    if (ranks.last() >= 14) return false
+    if (ranks.first() < 3) return false
+    if (ranks.last() > 13) return false
     for (i in 0 until ranks.size - 1) {
         if (ranks[i + 1] != ranks[i] + 1) return false
     }
@@ -25,11 +25,22 @@ private fun isStraight(ranks: List<Int>): Boolean {
 
 private fun isConsecutivePairs(ranks: List<Int>): Boolean {
     if (ranks.size < 6 || ranks.size % 2 != 0) return false
-    if (ranks.first() <= 4) return false
-    if (ranks.last() >= 14) return false
+    if (ranks.first() < 3) return false
+    if (ranks.last() > 13) return false
     for (i in ranks.indices step 2) {
         if (ranks[i] != ranks[i + 1]) return false
         if (i > 0 && ranks[i] != ranks[i - 2] + 1) return false
+    }
+    return true
+}
+
+private fun isConsecutiveTriplets(ranks: List<Int>): Boolean {
+    if (ranks.size < 6 || ranks.size % 3 != 0) return false
+    if (ranks.first() < 3) return false
+    if (ranks.last() > 13) return false
+    for (i in ranks.indices step 3) {
+        if (!(ranks[i] == ranks[i + 1] && ranks[i + 1] == ranks[i + 2])) return false
+        if (i > 0 && ranks[i] != ranks[i - 3] + 1) return false
     }
     return true
 }
@@ -47,6 +58,7 @@ private fun analyzeHand(cards: List<Card>): HandPattern? {
 
     if (len >= 3 && isStraight(ranks)) return HandPattern("STRAIGHT", ranks.last(), len)
     if (isConsecutivePairs(ranks)) return HandPattern("CONSECUTIVE_PAIRS", ranks.last(), len / 2)
+    if (isConsecutiveTriplets(ranks)) return HandPattern("CONSECUTIVE_TRIPLETS", ranks.last(), len / 3)
 
     return null
 }
@@ -62,6 +74,14 @@ private fun canBeat(current: List<Card>, last: List<Card>): Boolean {
 object GameService {
     private val games = mutableMapOf<String, GameState>()
     private val lastWinnerByRoom = mutableMapOf<String, String>()
+    private val nextRoundReadyByRoom = mutableMapOf<String, MutableSet<String>>()
+    private data class UndoEntry(
+        val playerId: String,
+        val playedCards: List<Card>,
+        val prevLastMove: Any?,
+        val prevPassCount: Int
+    )
+    private val undoByRoom = mutableMapOf<String, UndoEntry>()
 
     fun startGame(roomId: String): GameState {
         val room = RoomService.getRoom(roomId) ?: throw Exception("房间未找到")
@@ -69,6 +89,7 @@ object GameService {
         if (room.status != "WAITING") throw Exception("游戏已开始")
 
         games.remove(roomId)
+        undoByRoom.remove(roomId)
 
         val deck = createDeck().toMutableList().also { it.shuffle() }
         val holeCardsCount = 4
@@ -196,6 +217,13 @@ object GameService {
                 if (!canBeat(cardsToPlay, lastCards)) throw Exception("Cards must be greater than last play")
             }
         }
+
+        undoByRoom[roomId] = UndoEntry(
+            playerId = playerId,
+            playedCards = cardsToPlay.toList(),
+            prevLastMove = game.lastMove,
+            prevPassCount = game.passCount
+        )
         
         val newHand = hand.filter { !cardCodes.contains(it.code) }.toMutableList()
         game.playersHand[playerId] = newHand
@@ -204,6 +232,7 @@ object GameService {
         game.passCount = 0
 
         if (newHand.isEmpty()) {
+            undoByRoom.remove(roomId)
             game.phase = "FINISHED"
             val room = RoomService.getRoom(game.roomId)
             if (room != null) room.status = "FINISHED"
@@ -211,13 +240,22 @@ object GameService {
             return
         }
 
-        nextTurn(game)
+        val isMax = isCurrentMoveMax(game, playerId, pattern)
+        if (isMax) {
+            game.currentTurn = playerId
+            val lastMoveData = (game.lastMove as? Map<*, *>)?.toMutableMap() ?: mutableMapOf()
+            lastMoveData["isMax"] = true
+            game.lastMove = lastMoveData
+        } else {
+            nextTurn(game)
+        }
     }
 
     fun handlePass(roomId: String, playerId: String) {
         val game = games[roomId] ?: throw Exception("Game not found")
         if (game.currentTurn != playerId) throw Exception("Not your turn")
         if (game.phase != "PLAYING") throw Exception("Not playing")
+        undoByRoom.remove(roomId)
         if (game.lastMove == null) throw Exception("Cannot pass when you have free play")
         val lastPlayerId = ((game.lastMove as? Map<*, *>)?.get("playerId") as? String)
             ?: throw Exception("Invalid last move")
@@ -256,11 +294,128 @@ object GameService {
             },
             "currentTurn" to game.currentTurn,
             "phase" to game.phase,
+            "passCount" to game.passCount,
             "bidScore" to game.bidScore,
             "diggerId" to game.diggerId,
             "lastMove" to game.lastMove,
-            "holeCards" to if (game.phase == "TAKING_HOLE") game.deck else emptyList<Card>()
+            "holeCards" to if (game.phase == "TAKING_HOLE") game.deck else emptyList<Card>(),
+            "nextRoundReady" to if (room?.status == "FINISHED") (nextRoundReadyByRoom[roomId]?.toList() ?: emptyList<String>()) else emptyList<String>()
         )
+    }
+
+    fun undoLastMove(roomId: String, playerId: String) {
+        val game = games[roomId] ?: throw Exception("Game not found")
+        if (game.phase != "PLAYING") throw Exception("Not playing")
+        val lastPlayerId = ((game.lastMove as? Map<*, *>)?.get("playerId") as? String)
+        if (lastPlayerId != playerId) throw Exception("No undoable move")
+        if (game.passCount != 0) throw Exception("Cannot undo after others acted")
+
+        val undo = undoByRoom[roomId] ?: throw Exception("No undoable move")
+        if (undo.playerId != playerId) throw Exception("No undoable move")
+
+        val hand = game.playersHand[playerId] ?: mutableListOf()
+        val merged = (hand + undo.playedCards).toMutableList()
+        merged.sortWith(compareByDescending<Card> { getCompareValue(it.rank) }.thenByDescending { it.rank })
+        game.playersHand[playerId] = merged
+        game.lastMove = undo.prevLastMove
+        game.passCount = undo.prevPassCount
+        game.currentTurn = playerId
+        undoByRoom.remove(roomId)
+    }
+
+    fun markNextRoundReady(roomId: String, playerId: String): Boolean {
+        val room = RoomService.getRoom(roomId) ?: throw Exception("房间未找到")
+        if (room.status != "FINISHED") throw Exception("当前不在结算阶段")
+        if (!room.players.any { it.id == playerId }) throw Exception("玩家不在房间内")
+        val set = nextRoundReadyByRoom.getOrPut(roomId) { mutableSetOf() }
+        set.add(playerId)
+        if (set.size >= room.players.size) {
+            restartGame(roomId)
+            return true
+        }
+        return false
+    }
+
+    fun restartGame(roomId: String) {
+        val room = RoomService.getRoom(roomId) ?: throw Exception("房间未找到")
+        if (room.players.size < 4) throw Exception("玩家人数不足")
+        room.status = "WAITING"
+        nextRoundReadyByRoom.remove(roomId)
+        undoByRoom.remove(roomId)
+        startGame(roomId)
+    }
+
+    fun handlePlayerLeft(roomId: String, playerId: String) {
+        val set = nextRoundReadyByRoom[roomId]
+        if (set != null) {
+            set.remove(playerId)
+            if (set.isEmpty()) nextRoundReadyByRoom.remove(roomId)
+        }
+        val undo = undoByRoom[roomId]
+        if (undo?.playerId == playerId) undoByRoom.remove(roomId)
+    }
+
+    fun handleRoomDeleted(roomId: String) {
+        games.remove(roomId)
+        nextRoundReadyByRoom.remove(roomId)
+        undoByRoom.remove(roomId)
+    }
+
+    private fun isCurrentMoveMax(game: GameState, playerId: String, pattern: HandPattern): Boolean {
+        val others = game.playersHand.keys.filter { it != playerId }
+        for (pid in others) {
+            val hand = game.playersHand[pid] ?: mutableListOf()
+            if (canAnyBeat(hand, pattern)) return false
+        }
+        return true
+    }
+
+    private fun canAnyBeat(hand: List<Card>, pattern: HandPattern): Boolean {
+        val lastRankValue = getCompareValue(pattern.rank)
+        val counts = mutableMapOf<Int, Int>()
+        hand.forEach { c -> counts[c.rank] = (counts[c.rank] ?: 0) + 1 }
+
+        fun hasSingleAbove(): Boolean {
+            var best = Int.MIN_VALUE
+            counts.keys.forEach { r -> best = maxOf(best, getCompareValue(r)) }
+            return best > lastRankValue
+        }
+
+        fun hasOfKindAbove(need: Int): Boolean {
+            counts.forEach { (rank, cnt) ->
+                if (cnt >= need && getCompareValue(rank) > lastRankValue) return true
+            }
+            return false
+        }
+
+        fun hasStraightAbove(len: Int, needCountPerRank: Int): Boolean {
+            val minRank = 3
+            val maxRank = 13
+            for (start in minRank..(maxRank - len + 1)) {
+                val end = start + len - 1
+                if (end <= pattern.rank) continue
+                var ok = true
+                for (r in start..end) {
+                    if ((counts[r] ?: 0) < needCountPerRank) {
+                        ok = false
+                        break
+                    }
+                }
+                if (ok) return true
+            }
+            return false
+        }
+
+        return when (pattern.type) {
+            "SINGLE" -> hasSingleAbove()
+            "PAIR" -> hasOfKindAbove(2)
+            "TRIPLET" -> hasOfKindAbove(3)
+            "QUAD" -> hasOfKindAbove(4)
+            "STRAIGHT" -> hasStraightAbove(pattern.length, 1)
+            "CONSECUTIVE_PAIRS" -> hasStraightAbove(pattern.length, 2)
+            "CONSECUTIVE_TRIPLETS" -> hasStraightAbove(pattern.length, 3)
+            else -> false
+        }
     }
 
     private fun createDeck(): List<Card> {

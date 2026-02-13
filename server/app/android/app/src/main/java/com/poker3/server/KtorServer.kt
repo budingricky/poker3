@@ -109,6 +109,24 @@ class KtorServer(private val androidContext: Context) {
                     get("/health") {
                         call.respond(ApiResponse(true, mapOf("message" to "ok")))
                     }
+                    get("/info") {
+                        val ip = NetUtil.getLocalIpAddress() ?: ""
+                        val port = runningPort ?: 8080
+                        val model = try { android.os.Build.MODEL ?: "" } catch (_: Exception) { "" }
+                        val manufacturer = try { android.os.Build.MANUFACTURER ?: "" } catch (_: Exception) { "" }
+                        val name = ("Poker3 " + listOf(manufacturer, model).filter { it.isNotBlank() }.joinToString(" ")).trim().replace("\"", "\\\"")
+                        val httpUrl = if (ip.isNotBlank()) "http://$ip:$port" else ""
+                        val wsUrl = if (ip.isNotBlank()) "ws://$ip:$port/ws" else ""
+                        call.respond(ApiResponse(true, mapOf(
+                            "name" to name,
+                            "ip" to ip,
+                            "httpPort" to port,
+                            "httpUrl" to httpUrl,
+                            "wsUrl" to wsUrl,
+                            "apiPrefix" to "/api",
+                            "wsPath" to "/ws"
+                        )))
+                    }
                     route("/admin") {
                         post("/logs/clear") {
                             AppLogger.i("HTTP", "Clear logs requested")
@@ -156,6 +174,11 @@ class KtorServer(private val androidContext: Context) {
                             try {
                                 val req = call.receive<LeaveRoomRequest>()
                                 val result = RoomService.removePlayer(req.roomId, req.playerId)
+                                try {
+                                    GameService.handlePlayerLeft(req.roomId, req.playerId)
+                                    if (result.first) GameService.handleRoomDeleted(req.roomId)
+                                } catch (_: Exception) {
+                                }
                                 call.respond(ApiResponse(true, mapOf("roomDeleted" to result.first, "newHostId" to result.second)))
                                 if (!result.first) {
                                     broadcastRoom(req.roomId, "room_update", null)
@@ -170,6 +193,10 @@ class KtorServer(private val androidContext: Context) {
                             try {
                                 val req = call.receive<LeaveRoomRequest>() // Reusing LeaveRoomRequest structure (roomId, playerId)
                                 RoomService.closeRoom(req.roomId, req.playerId)
+                                try {
+                                    GameService.handleRoomDeleted(req.roomId)
+                                } catch (_: Exception) {
+                                }
                                 broadcastRoom(req.roomId, "room_closed", null)
                                 call.respond(ApiResponse(true, mapOf("closed" to true)))
                                 broadcastLobby("room_update", null)
@@ -186,6 +213,28 @@ class KtorServer(private val androidContext: Context) {
                                 broadcastRoom(req.roomId, "room_update", null)
                                 broadcastLobby("room_update", null)
                                 call.respond(ApiResponse(true, mapOf("status" to "started")))
+                            } catch (e: Exception) {
+                                call.respond(ApiResponse<Any>(false, error = e.message))
+                            }
+                        }
+
+                        post("/next_round") {
+                            try {
+                                val req = call.receive<LeaveRoomRequest>()
+                                val started = GameService.markNextRoundReady(req.roomId, req.playerId)
+                                val room = RoomService.getRoom(req.roomId)
+                                val readyList = GameService.getGameState(req.roomId, req.playerId)?.get("nextRoundReady")
+                                val readyCount = (readyList as? List<*>)?.size ?: 0
+                                val totalCount = room?.players?.size ?: 0
+                                broadcastRoom(req.roomId, "next_round_ready", mapOf("playerId" to req.playerId, "readyCount" to readyCount, "totalCount" to totalCount))
+                                if (started) {
+                                    broadcastRoom(req.roomId, "game_started", mapOf("roomId" to req.roomId))
+                                    broadcastRoom(req.roomId, "room_update", null)
+                                    broadcastLobby("room_update", null)
+                                } else {
+                                    broadcastRoom(req.roomId, "room_update", null)
+                                }
+                                call.respond(ApiResponse(true, mapOf("status" to "ready")))
                             } catch (e: Exception) {
                                 call.respond(ApiResponse<Any>(false, error = e.message))
                             }
@@ -232,10 +281,27 @@ class KtorServer(private val androidContext: Context) {
                                     broadcastRoom(req.roomId, "room_update", null)
                                     broadcastLobby("room_update", null)
                                 } else {
+                                    val lastMove = state?.get("lastMove") as? Map<*, *>
+                                    val isMax = lastMove?.get("isMax") as? Boolean ?: false
+                                    if (isMax) {
+                                        broadcastRoom(req.roomId, "max_play", mapOf("playerId" to req.playerId))
+                                    }
                                     broadcastRoom(req.roomId, "game_update", null)
                                 }
                                 
                                 call.respond(ApiResponse(true, mapOf("status" to "played")))
+                            } catch (e: Exception) {
+                                call.respond(ApiResponse<Any>(false, error = e.message))
+                            }
+                        }
+
+                        post("/undo") {
+                            try {
+                                val req = call.receive<LeaveRoomRequest>()
+                                GameService.undoLastMove(req.roomId, req.playerId)
+                                broadcastRoom(req.roomId, "undo", mapOf("playerId" to req.playerId))
+                                broadcastRoom(req.roomId, "game_update", null)
+                                call.respond(ApiResponse(true, mapOf("status" to "undone")))
                             } catch (e: Exception) {
                                 call.respond(ApiResponse<Any>(false, error = e.message))
                             }

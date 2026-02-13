@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Poker3</string>
+    <string name="title_activity_main">Poker3</string>
+    <string name="package_name">com.poker3.client</string>
+    <string name="custom_url_scheme">com.poker3.client</string>
+</resources>

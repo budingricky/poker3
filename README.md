@@ -43,6 +43,34 @@ npm run client:dev
 
 启动后打开浏览器，输入/选择服务端地址（例如 `http://192.168.1.5:3001` 或 Android 应用显示的地址），即可连接 API 与 WebSocket。
 
+## HTTPS（局域网自签证书）
+
+局域网用手机/平板访问时，浏览器通常会因为 **非 HTTPS** 拒绝麦克风采集（实时语音需要 `getUserMedia`）。本项目支持通过环境变量启用 HTTPS：
+
+### 服务端（Node）启用 HTTPS
+
+- 生成证书（推荐 mkcert，能自动加入系统信任链）
+  - 安装并初始化（仅示例）：`mkcert -install`
+  - 生成证书（把你的局域网 IP 换成真实值）：`mkcert 192.168.50.121 localhost 127.0.0.1`
+  - 会得到类似 `192.168.50.121+2.pem`（证书）与 `192.168.50.121+2-key.pem`（私钥）
+- 启动时指定：
+  - `SSL_CERT_PATH=<证书pem路径>`
+  - `SSL_KEY_PATH=<私钥pem路径>`
+
+启用后：
+- `/api/info` 会返回 `https://...` 与 `wss://...`
+- WebSocket 地址在客户端会自动从 `https` 推导为 `wss`
+
+### 网页客户端（Vite）启用 HTTPS
+
+开发模式下同样可读取证书文件启用 HTTPS：
+- `VITE_HTTPS_CERT_PATH=<证书pem路径>`
+- `VITE_HTTPS_KEY_PATH=<私钥pem路径>`
+
+然后启动 `npm run client:dev`，访问 `https://<你的IP>:5173/`。
+
+> 注：自签证书必须被系统/浏览器信任，否则浏览器可能仍会拒绝麦克风权限；mkcert 是最省事的方式。
+
 ## 构建 Android 应用 (APK)
 
 Android 项目位于 `server/app/android/` 目录下。该应用内置了 Ktor 服务器，并通过 Android NSD/mDNS 注册 `poker3`（可通过 `http://poker3.local` 或 `http://poker3.local:8080` 访问，端口取决于系统权限）。
