@@ -14,6 +14,6 @@
     "client:check": "npm --workspace client/app run check"
   },
   "devDependencies": {
-    "@esbuild/win32-x64": "0.27.0"
+    "esbuild": "0.27.0"
   }
 }
