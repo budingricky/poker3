@@ -1,12 +1,11 @@
 workflows:
-  ios-workflow:
-    name: iOS Build & Release
+  ios-build:
+    name: iOS Build
     max_build_duration: 120
     instance_type: mac_mini_m1
     environment:
-      # 👇 这一段是新增的，必须要有，名字要和你刚才在网页上创建的组名一模一样！
       groups:
-        - apple_credentials
+        - apple_credentials # 你的环境变量组名
       node: 20
       xcode: latest
       cocoapods: default
@@ -16,25 +15,48 @@ workflows:
       branch_patterns:
         - pattern: main
     scripts:
-      - name: Install dependencies
+      - name: Install dependencies & Build Web
         script: |
+          # 👇 1. 进入正确的项目根目录
+          cd client/app
+
+          # 2. 安装依赖并构建
           npm install
           npm run build
-          npx cap add ios
+
+          # 3. 同步代码到 iOS 目录 (现在它是标准的 client/app/ios)
           npx cap sync ios
-      - name: Set up keychain
+
+      - name: Initialize Keychain
         script: keychain initialize
-      - name: Fetch signing files
+
+      - name: Auto Code Signing
         script: |
-          # 因为上面引入了 groups，这里才能读到你的账号密码
-          app-store-connect fetch-signing-files $(xcode-project bundle-id) --type IOS_APP_STORE --create
+          # 👇 4. 告诉 Codemagic 你的工程文件在哪里
+          # 路径结构: client -> app -> ios -> App -> App.xcodeproj
+          PROJECT_PATH="client/app/ios/App/App.xcodeproj"
+
+          # 自动获取 Bundle ID 并申请证书
+          APP_ID=$(xcode-project detect-bundle-id --project "$PROJECT_PATH")
+          echo "Detected Bundle ID: $APP_ID"
+
+          app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
           keychain add-certificates
-      - name: Set up code signing settings on Xcode project
-        script: xcode-project use-profiles
-      - name: Build ipa for distribution
+
+      - name: Set up code signing
         script: |
+          # 5. 应用证书
+          PROJECT_PATH="client/app/ios/App/App.xcodeproj"
+          xcode-project use-profiles --project "$PROJECT_PATH"
+
+      - name: Build IPA
+        script: |
+          # 6. 构建 IPA
+          WORKSPACE_PATH="client/app/ios/App/App.xcworkspace"
+
           xcode-project build-ipa \
-            --workspace "ios/App/App.xcworkspace" \
+            --workspace "$WORKSPACE_PATH" \
             --scheme "App"
+
     artifacts:
-      - build/ios/ipa/*.ipa
+      - client/app/ios/App/build/*.ipa  # 👈 确保输出路径正确
