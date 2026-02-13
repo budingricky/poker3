@@ -1,62 +1,13 @@
 workflows:
-  ios-build:
-    name: iOS Build
-    max_build_duration: 120
+  debug-ghost-cert:
+    name: 🕵️ Ghostbuster Debug
     instance_type: mac_mini_m1
     environment:
       groups:
-        - apple_credentials # 你的环境变量组名
-      node: 20
-      xcode: latest
-      cocoapods: default
-    triggering:
-      events:
-        - push
-      branch_patterns:
-        - pattern: main
+        - apple_credentials
     scripts:
-      - name: Install dependencies & Build Web
+      - name: List All Certificates
         script: |
-          # 👇 1. 进入正确的项目根目录
-          cd client/app
-
-          # 2. 安装依赖并构建
-          npm install
-          npm run build
-
-          # 3. 同步代码到 iOS 目录 (现在它是标准的 client/app/ios)
-          npx cap sync ios
-
-      - name: Initialize Keychain
-        script: keychain initialize
-
-      - name: Auto Code Signing
-        script: |
-          # 👇 4. 告诉 Codemagic 你的工程文件在哪里
-          # 路径结构: client -> app -> ios -> App -> App.xcodeproj
-          PROJECT_PATH="client/app/ios/App/App.xcodeproj"
-
-          # 自动获取 Bundle ID 并申请证书
-          APP_ID=$(xcode-project detect-bundle-id --project "$PROJECT_PATH")
-          echo "Detected Bundle ID: $APP_ID"
-
-          app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
-          keychain add-certificates
-
-      - name: Set up code signing
-        script: |
-          # 5. 应用证书
-          PROJECT_PATH="client/app/ios/App/App.xcodeproj"
-          xcode-project use-profiles --project "$PROJECT_PATH"
-
-      - name: Build IPA
-        script: |
-          # 6. 构建 IPA
-          WORKSPACE_PATH="client/app/ios/App/App.xcworkspace"
-
-          xcode-project build-ipa \
-            --workspace "$WORKSPACE_PATH" \
-            --scheme "App"
-
-    artifacts:
-      - client/app/ios/App/build/*.ipa  # 👈 确保输出路径正确
+          echo "正在连接 Apple 后台..."
+          # 列出 API 能看到的所有证书
+          app-store-connect certificates list --verbose
