@@ -37,6 +37,45 @@ jobs:
       - name: Build web assets
         run: npm --workspace client/app run build
 
+      - name: Patch Podfile for CI (fix "Could not automatically select an Xcode project")
+        run: |
+          set -euo pipefail
+          cd "$IOS_DIR"
+          # 如果 Podfile 不存在（极少见），创建标准 Capacitor Podfile
+          if [ ! -f Podfile ]; then
+            cat > Podfile <<'EOF'
+          require_relative '../../node_modules/@capacitor/ios/scripts/pods_helpers'
+
+          platform :ios, '13.0'
+          install! 'cocoapods', :deterministic_uuids => false
+
+          target 'App' do
+            capacitor_pods
+            # Add your Pods here
+          end
+
+          post_install do |installer|
+            assertDeploymentTarget(installer)
+          end
+          EOF
+            echo "Created missing Podfile"
+          fi
+
+          # 确保 Podfile 包含 project 指定（CI 环境下 CocoaPods 经常需要显式指定）
+          if ! grep -q "project 'App.xcodeproj'" Podfile; then
+            sed -i '' '3i\
+          project '\''App.xcodeproj'\''
+            ' Podfile
+            echo "Added 'project App.xcodeproj' to Podfile"
+          fi
+
+          # 额外保险：确保 platform 版本合理（Xcode 16.2 默认支持 iOS 18）
+          if ! grep -q "platform :ios" Podfile; then
+            sed -i '' '3i\
+          platform :ios, '\''13.0'\''
+            ' Podfile
+          fi
+
       - name: Capacitor sync iOS
         run: |
           cd "$WORKDIR"
@@ -86,7 +125,7 @@ jobs:
       - name: Install CocoaPods
         run: sudo gem install cocoapods
 
-      - name: Pod install
+      - name: Pod install (with repo update)
         run: |
           cd "$IOS_DIR"
           pod install --repo-update
