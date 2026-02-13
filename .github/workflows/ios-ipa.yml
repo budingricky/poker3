@@ -68,6 +68,7 @@ jobs:
           CERT_KEY_PATH="$RUNNER_TEMP/cert.key.pem"
           CERT_CRT_CLEAN_PATH="$RUNNER_TEMP/cert.clean.pem"
           CERT_KEY_CLEAN_PATH="$RUNNER_TEMP/key.clean.pem"
+          CERT_KEY_TRAD_PATH="$RUNNER_TEMP/key.traditional.pem"
           PROFILE_PATH="$RUNNER_TEMP/profile.mobileprovision"
           KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
 
@@ -86,13 +87,18 @@ jobs:
           openssl pkcs12 -in "$CERT_P12_PATH" -passin "pass:$IOS_CERT_PASSWORD" -nocerts -nodes -out "$CERT_KEY_PATH" >/dev/null
           awk 'BEGIN{p=0} /-----BEGIN CERTIFICATE-----/{p=1} p{print} /-----END CERTIFICATE-----/{p=0}' "$CERT_CRT_PATH" > "$CERT_CRT_CLEAN_PATH"
           awk 'BEGIN{p=0} /-----BEGIN .*PRIVATE KEY-----/{p=1} p{print} /-----END .*PRIVATE KEY-----/{p=0}' "$CERT_KEY_PATH" > "$CERT_KEY_CLEAN_PATH"
+          if openssl pkey -in "$CERT_KEY_CLEAN_PATH" -out "$CERT_KEY_TRAD_PATH" -traditional 2>/dev/null; then
+            :
+          else
+            openssl rsa -in "$CERT_KEY_CLEAN_PATH" -out "$CERT_KEY_TRAD_PATH" >/dev/null
+          fi
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security default-keychain -s "$KEYCHAIN_PATH"
           security import "$CERT_CRT_CLEAN_PATH" -A -t cert -f pemseq -k "$KEYCHAIN_PATH"
-          security import "$CERT_KEY_CLEAN_PATH" -A -t priv -f pemseq -k "$KEYCHAIN_PATH" -P ""
+          security import "$CERT_KEY_TRAD_PATH" -A -t priv -f openssl -k "$KEYCHAIN_PATH" -P ""
           security list-keychain -d user -s "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
