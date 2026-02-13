@@ -131,14 +131,14 @@ jobs:
           data = data.replace("ProvisioningStyle = Automatic;", "ProvisioningStyle = Manual;")
 
           def strip_key(s: str, key: str) -> str:
-            return re.sub(rf"^[ \\t]*{re.escape(key)}[ \\t]*=[^;]*;\\s*\\n?", "", s, flags=re.M)
+            return re.sub(rf"^[ \t]*{re.escape(key)}[ \t]*=[^;]*;\s*\n?", "", s, flags=re.M)
 
           def patch_build_settings(body: str) -> str:
             if "INFOPLIST_FILE = App/Info.plist;" not in body:
               return body
 
-            indent_match = re.search(r"^(\\s+)\\w+\\s*=\\s*[^;]+;\\s*$", body, flags=re.M)
-            indent = indent_match.group(1) if indent_match else "\\t\\t\\t\\t"
+            indent_match = re.search(r"^(\s+)\w+\s*=\s*[^;]+;\s*$", body, flags=re.M)
+            indent = indent_match.group(1) if indent_match else "\t\t\t\t"
 
             for k in [
               "CODE_SIGN_STYLE",
@@ -151,32 +151,31 @@ jobs:
               body = strip_key(body, k)
 
             insert = (
-              f"{indent}CODE_SIGN_STYLE = Manual;\\n"
-              f"{indent}CODE_SIGN_IDENTITY = \\\"Apple Distribution\\\";\\n"
-              f"{indent}DEVELOPMENT_TEAM = {team};\\n"
-              f"{indent}PRODUCT_BUNDLE_IDENTIFIER = {bundle};\\n"
-              f"{indent}PROVISIONING_PROFILE_SPECIFIER = \\\"{profile_name}\\\";\\n"
+              f"{indent}CODE_SIGN_STYLE = Manual;\n"
+              f"{indent}CODE_SIGN_IDENTITY = \"Apple Distribution\";\n"
+              f"{indent}DEVELOPMENT_TEAM = {team};\n"
+              f"{indent}PRODUCT_BUNDLE_IDENTIFIER = {bundle};\n"
+              f"{indent}PROVISIONING_PROFILE_SPECIFIER = \"{profile_name}\";\n"
             )
 
-            body = body.rstrip() + "\\n" + insert
-            if not body.endswith("\\n"):
-              body += "\\n"
+            body = body.rstrip() + "\n" + insert
+            if not body.endswith("\n"):
+              body += "\n"
             return body
 
-          pattern = re.compile(r"(buildSettings\\s*=\\s*\\{\\n)([\\s\\S]*?)(\\n\\s*\\};)", re.M)
-          patched_count = 0
+          pattern = re.compile(r"(buildSettings\s*=\s*\{\n)([\s\S]*?)(\n\s*\};)", re.M)
+          stats = {"count": 0}
 
           def repl(m: re.Match) -> str:
-            nonlocal patched_count
             head, body, tail = m.group(1), m.group(2), m.group(3)
             new_body = patch_build_settings(body)
             if new_body != body:
-              patched_count += 1
+              stats["count"] += 1
             return head + new_body + tail
 
           data = pattern.sub(repl, data)
 
-          if patched_count == 0:
+          if stats["count"] == 0:
             raise SystemExit("Failed to patch App build settings in pbxproj (INFOPLIST_FILE match not found)")
 
           with open(path, "w", encoding="utf-8") as f:
