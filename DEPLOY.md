@@ -2,9 +2,17 @@
 
 本指南介绍如何在 Android 手机上运行此游戏服务器。
 
-## 方法一：使用 Termux (推荐)
+说明：服务端仅提供 API 与 WebSocket，不提供网页渲染与静态资源。
 
-Termux 是 Android 上的终端模拟器，可以安装 Node.js 环境。
+## 方法一：使用 Android 原生应用（推荐）
+
+- Android Studio 打开 `server/app/android`
+- 构建并安装 APK 到手机
+- 在应用内启动服务器，记下应用显示的服务端地址（例如 `http://192.168.1.5:8080`）
+
+## 方法二：使用 Termux（Node 服务端）
+
+Termux 是 Android 上的终端模拟器，可以安装 Node.js 环境并运行 `server/app` 下的 Node 服务端。
 
 ### 步骤
 
@@ -27,22 +35,22 @@ Termux 是 Android 上的终端模拟器，可以安装 Node.js 环境。
    npm install
    ```
 
-5. **构建前端** (可选，如果只在开发模式运行可跳过):
-   ```bash
-   npm run build
-   ```
-
-6. **启动服务器**：
+5. **启动服务器**：
    为了让局域网其他设备访问，需要确保手机连接 WiFi 或开启热点。
    
-   运行开发服务器 (最简单):
    ```bash
-   npm run dev -- --host
+   npm run server:dev
    ```
-   Vite 会显示 Network 地址，例如 `http://192.168.x.x:5173`。
 
-7. **访问**：
-   其他手机连接同一 WiFi/热点，浏览器访问上述 IP 地址。
+## 客户端（网页）
+
+网页客户端在 `client/app`，需要在任意一台设备上启动（电脑/手机浏览器均可访问）。
+
+```bash
+npm run client:dev
+```
+
+打开网页客户端后，填写/选择服务端地址（Android 应用显示的地址或 `http://<手机IP>:3001`），即可连接进行游戏。
 
 ## 注意事项
 

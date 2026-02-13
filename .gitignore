@@ -23,3 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 .vite
+
+**/.gradle
+**/build
+**/local.properties
