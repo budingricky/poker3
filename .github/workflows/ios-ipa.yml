@@ -229,15 +229,8 @@ jobs:
           <dict>
             <key>method</key>
             <string>app-store-connect</string>
-            <key>signingStyle</key>
-            <string>manual</string>
             <key>teamID</key>
             <string>${TEAM_ID}</string>
-            <key>provisioningProfiles</key>
-            <dict>
-              <key>${BUNDLE_ID}</key>
-              <string>${PROFILE_NAME}</string>
-            </dict>
             <key>destination</key>
             <string>export</string>
             <key>stripSwiftSymbols</key>
@@ -247,6 +240,7 @@ jobs:
           </dict>
           </plist>
           EOF
+          plutil -lint "$EXPORT_PLIST"
           xcodebuild -exportArchive \
             -archivePath "$RUNNER_TEMP/App.xcarchive" \
             -exportPath "$RUNNER_TEMP/ipa" \
