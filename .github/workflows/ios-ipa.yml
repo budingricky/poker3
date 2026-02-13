@@ -150,16 +150,16 @@ jobs:
           echo "$APPSTORE_API_KEY_P8_BASE64" | decode_b64 > "$KEY_P8"
 
           KEY_P8_PATH="$KEY_P8" KEY_JSON_PATH="$KEY_JSON" python3 - <<'PY'
-import json, os
-key_id = os.environ["APPSTORE_KEY_ID"]
-issuer_id = os.environ["APPSTORE_ISSUER_ID"]
-path = os.environ["KEY_P8_PATH"]
-with open(path, "r", encoding="utf-8") as f:
-    key = f.read()
-obj = {"key_id": key_id, "issuer_id": issuer_id, "key": key, "in_house": False}
-with open(os.environ["KEY_JSON_PATH"], "w", encoding="utf-8") as f:
-    json.dump(obj, f)
-PY
+          import json, os
+          key_id = os.environ["APPSTORE_KEY_ID"]
+          issuer_id = os.environ["APPSTORE_ISSUER_ID"]
+          path = os.environ["KEY_P8_PATH"]
+          with open(path, "r", encoding="utf-8") as f:
+              key = f.read()
+          obj = {"key_id": key_id, "issuer_id": issuer_id, "key": key, "in_house": False}
+          with open(os.environ["KEY_JSON_PATH"], "w", encoding="utf-8") as f:
+              json.dump(obj, f)
+          PY
           fastlane pilot upload --ipa "$IPA_PATH" --api_key_path "$KEY_JSON" --skip_waiting_for_build_processing true
 
       - name: Upload artifact
