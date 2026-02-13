@@ -190,25 +190,25 @@ jobs:
           if [ -n "$CERT_NAME" ]; then
             echo "Using certificate: $CERT_NAME"
             
-            # 构建 xcodebuild 命令
+            # 构建 xcodebuild 命令 - 使用目标特定的设置语法
             XCODEBUILD_CMD="xcodebuild -workspace App.xcworkspace \
               -scheme App \
               -configuration Release \
               -sdk iphoneos \
               -destination 'generic/platform=iOS' \
               -archivePath \"$RUNNER_TEMP/App.xcarchive\" \
-              PRODUCT_BUNDLE_IDENTIFIER=\"$BUNDLE_ID\" \
-              DEVELOPMENT_TEAM=\"$TEAM_ID\" \
-              CODE_SIGN_STYLE=\"Manual\" \
-              CODE_SIGN_IDENTITY=\"$CERT_NAME\" \
               OTHER_CODE_SIGN_FLAGS=\"--keychain $KEYCHAIN_PATH\" \
-              MARKETING_VERSION=\"$VERSION\" \
-              CURRENT_PROJECT_VERSION=\"$BUILD_NUMBER\""
+              'App/PRODUCT_BUNDLE_IDENTIFIER'=\"$BUNDLE_ID\" \
+              'App/DEVELOPMENT_TEAM'=\"$TEAM_ID\" \
+              'App/CODE_SIGN_STYLE'=\"Manual\" \
+              'App/CODE_SIGN_IDENTITY'=\"$CERT_NAME\" \
+              'App/MARKETING_VERSION'=\"$VERSION\" \
+              'App/CURRENT_PROJECT_VERSION'=\"$BUILD_NUMBER\""
             
-            # 添加 provisioning profile 信息（如果可用）
+            # 为 App 目标添加 provisioning profile 信息（如果可用）
             if [ -n "${PROFILE_UUID:-}" ]; then
               XCODEBUILD_CMD="$XCODEBUILD_CMD \
-              PROVISIONING_PROFILE_SPECIFIER=\"$PROFILE_UUID\""
+              'App/PROVISIONING_PROFILE_SPECIFIER'=\"$PROFILE_UUID\""
               echo "Using provisioning profile with UUID: $PROFILE_UUID"
             else
               echo "Warning: No provisioning profile UUID available"
