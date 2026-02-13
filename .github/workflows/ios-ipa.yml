@@ -12,6 +12,7 @@ jobs:
       TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       BUNDLE_ID: ${{ secrets.IOS_BUNDLE_ID }}
       IOS_MARKETING_VERSION: ${{ secrets.IOS_MARKETING_VERSION }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -55,95 +56,14 @@ jobs:
           }
           req "APPLE_TEAM_ID" "${TEAM_ID:-}"
           req "IOS_BUNDLE_ID" "${BUNDLE_ID:-}"
-          req "IOS_CERT_P12_BASE64" "${{ secrets.IOS_CERT_P12_BASE64 }}"
-          req "IOS_CERT_PASSWORD" "${{ secrets.IOS_CERT_PASSWORD }}"
-          req "KEYCHAIN_PASSWORD" "${{ secrets.KEYCHAIN_PASSWORD }}"
           req "APPSTORE_ISSUER_ID" "${{ secrets.APPSTORE_ISSUER_ID }}"
           req "APPSTORE_KEY_ID" "${{ secrets.APPSTORE_KEY_ID }}"
           req "APPSTORE_API_KEY_P8_BASE64" "${{ secrets.APPSTORE_API_KEY_P8_BASE64 }}"
-          req "IOS_PROVISIONING_PROFILE_BASE64" "${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}"
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
 
-      - name: Setup signing (p12 + provisioning profile)
-        env:
-          IOS_CERT_P12_BASE64: ${{ secrets.IOS_CERT_P12_BASE64 }}
-          IOS_CERT_PASSWORD: ${{ secrets.IOS_CERT_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
-        run: |
-          set -euo pipefail
-          CERT_P12_PATH="$RUNNER_TEMP/cert.p12"
-          CERT_CRT_PATH="$RUNNER_TEMP/cert.crt.pem"
-          CERT_KEY_PATH="$RUNNER_TEMP/cert.key.pem"
-          CERT_CRT_CLEAN_PATH="$RUNNER_TEMP/cert.clean.pem"
-          CERT_KEY_CLEAN_PATH="$RUNNER_TEMP/key.clean.pem"
-          CERT_KEY_TRAD_PATH="$RUNNER_TEMP/key.traditional.pem"
-          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
-          PROFILE_PATH="$RUNNER_TEMP/profile.mobileprovision"
-
-          decode_b64() {
-            if base64 --help 2>&1 | grep -q -- '--decode'; then
-              base64 --decode
-            else
-              base64 -D
-            fi
-          }
-          printf '%s' "$IOS_CERT_P12_BASE64" | decode_b64 > "$CERT_P12_PATH"
-
-          # Import certificate
-          openssl pkcs12 -in "$CERT_P12_PATH" -passin "pass:$IOS_CERT_PASSWORD" -info -noout >/dev/null
-          openssl pkcs12 -in "$CERT_P12_PATH" -passin "pass:$IOS_CERT_PASSWORD" -clcerts -nokeys -out "$CERT_CRT_PATH" >/dev/null
-          openssl pkcs12 -in "$CERT_P12_PATH" -passin "pass:$IOS_CERT_PASSWORD" -nocerts -nodes -out "$CERT_KEY_PATH" >/dev/null
-          awk 'BEGIN{p=0} /-----BEGIN CERTIFICATE-----/{p=1} p{print} /-----END CERTIFICATE-----/{p=0}' "$CERT_CRT_PATH" > "$CERT_CRT_CLEAN_PATH"
-          awk 'BEGIN{p=0} /-----BEGIN .*PRIVATE KEY-----/{p=1} p{print} /-----END .*PRIVATE KEY-----/{p=0}' "$CERT_KEY_PATH" > "$CERT_KEY_CLEAN_PATH"
-          if openssl pkey -in "$CERT_KEY_CLEAN_PATH" -out "$CERT_KEY_TRAD_PATH" -traditional 2>/dev/null; then
-            :
-          else
-            openssl rsa -in "$CERT_KEY_CLEAN_PATH" -out "$CERT_KEY_TRAD_PATH" >/dev/null
-          fi
-
-          # Setup keychain
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security default-keychain -s "$KEYCHAIN_PATH"
-          security import "$CERT_CRT_CLEAN_PATH" -A -t cert -f pemseq -k "$KEYCHAIN_PATH"
-          security import "$CERT_KEY_TRAD_PATH" -A -t priv -f openssl -k "$KEYCHAIN_PATH" -P ""
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          # Import provisioning profile
-          if [ -n "${IOS_PROVISIONING_PROFILE_BASE64:-}" ]; then
-            printf '%s' "$IOS_PROVISIONING_PROFILE_BASE64" | decode_b64 > "$PROFILE_PATH"
-            
-            # Extract UUID from provisioning profile
-            PROFILE_UUID=$(security cms -D -i "$PROFILE_PATH" | plutil -extract UUID raw - 2>/dev/null || echo "")
-            
-            if [ -n "$PROFILE_UUID" ]; then
-              # Create provisioning profiles directory
-              mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
-              # Copy profile to correct location with UUID as filename
-              cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
-              echo "PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
-              echo "PROVISIONING_PROFILE_PATH=$PROFILE_PATH" >> "$GITHUB_ENV"
-              echo "Imported provisioning profile with UUID: $PROFILE_UUID"
-            else
-              echo "Warning: Could not extract UUID from provisioning profile"
-            fi
-          else
-            echo "Warning: No provisioning profile provided"
-          fi
-
-          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
-
-      - name: Signing debug
-        run: |
-          set -euo pipefail
-          echo "Keychain: $KEYCHAIN_PATH"
-          security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
-      - name: Setup App Store Connect API key (for Xcode)
+      - name: Setup App Store Connect API key
         env:
           APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
           APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
@@ -164,12 +84,9 @@ jobs:
           echo "XCODE_AUTH_ISSUER_ID=$APPSTORE_ISSUER_ID" >> "$GITHUB_ENV"
 
       - name: Install CocoaPods
-        run: |
-          sudo gem install cocoapods
+        run: sudo gem install cocoapods
 
       - name: Pod install
-        env:
-          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           cd "$IOS_DIR"
           pod install --repo-update
@@ -178,64 +95,28 @@ jobs:
         run: |
           set -euo pipefail
           cd "$IOS_DIR"
-          security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
-          security default-keychain -s "$KEYCHAIN_PATH"
           BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
           VERSION="${IOS_MARKETING_VERSION:-1.0.0}"
-          
-          # 获取证书名称
-          CERT_NAME=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" 2>/dev/null | grep -o '"[^"]*"' | head -1 | tr -d '"' || echo "")
-          
-          if [ -n "$CERT_NAME" ]; then
-            echo "Using certificate: $CERT_NAME"
-            
-            # 项目已配置为手动签名，需要指定证书和 provisioning profile
-            # 使用目标特定的语法确保设置只应用于 App 目标
-            xcodebuild -workspace App.xcworkspace \
-              -scheme App \
-              -configuration Release \
-              -sdk iphoneos \
-              -destination 'generic/platform=iOS' \
-              -archivePath "$RUNNER_TEMP/App.xcarchive" \
-              "App/OTHER_CODE_SIGN_FLAGS"="--keychain $KEYCHAIN_PATH" \
-              "App/CODE_SIGN_IDENTITY"="$CERT_NAME" \
-              "App/DEVELOPMENT_TEAM"="$TEAM_ID" \
-              "App/PRODUCT_BUNDLE_IDENTIFIER"="$BUNDLE_ID" \
-              "App/MARKETING_VERSION"="$VERSION" \
-              "App/CURRENT_PROJECT_VERSION"="$BUILD_NUMBER" \
-              "App/PROVISIONING_PROFILE_SPECIFIER"="$PROFILE_UUID" \
-              -allowProvisioningUpdates \
-              -authenticationKeyPath "$XCODE_AUTH_KEY_PATH" \
-              -authenticationKeyID "$XCODE_AUTH_KEY_ID" \
-              -authenticationKeyIssuerID "$XCODE_AUTH_ISSUER_ID" \
-              archive
-          else
-            echo "No certificate found, using automatic signing"
-            xcodebuild -workspace App.xcworkspace \
-              -scheme App \
-              -configuration Release \
-              -sdk iphoneos \
-              -destination 'generic/platform=iOS' \
-              -archivePath "$RUNNER_TEMP/App.xcarchive" \
-              PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
-              DEVELOPMENT_TEAM="$TEAM_ID" \
-              OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN_PATH" \
-              MARKETING_VERSION="$VERSION" \
-              CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-              -allowProvisioningUpdates \
-              -authenticationKeyPath "$XCODE_AUTH_KEY_PATH" \
-              -authenticationKeyID "$XCODE_AUTH_KEY_ID" \
-              -authenticationKeyIssuerID "$XCODE_AUTH_ISSUER_ID" \
-              archive
-          fi
+
+          xcodebuild -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$XCODE_AUTH_KEY_PATH" \
+            -authenticationKeyID "$XCODE_AUTH_KEY_ID" \
+            -authenticationKeyIssuerID "$XCODE_AUTH_ISSUER_ID" \
+            archive
 
       - name: Export IPA
         run: |
           set -euo pipefail
-          security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
-          security default-keychain -s "$KEYCHAIN_PATH"
           EXPORT_PLIST="$RUNNER_TEMP/exportOptions.plist"
           cat > "$EXPORT_PLIST" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
@@ -243,13 +124,9 @@ jobs:
           <plist version="1.0">
           <dict>
             <key>method</key>
-            <string>app-store-connect</string>
-            <key>signingStyle</key>
-            <string>automatic</string>
+            <string>app-store</string>
             <key>teamID</key>
             <string>${TEAM_ID}</string>
-            <key>destination</key>
-            <string>export</string>
             <key>stripSwiftSymbols</key>
             <true/>
             <key>compileBitcode</key>
@@ -258,20 +135,7 @@ jobs:
           </plist>
           EOF
           plutil -lint "$EXPORT_PLIST"
-          if [ -d "$RUNNER_TEMP/App.xcarchive/Products/Applications" ]; then
-            APP_PATH="$(find "$RUNNER_TEMP/App.xcarchive/Products/Applications" -maxdepth 1 -name "*.app" | head -n 1 || true)"
-            if [ -n "${APP_PATH:-}" ]; then
-              echo "Archive app: $APP_PATH"
-              echo "Embedded frameworks:"
-              ls -la "$APP_PATH/Frameworks" || true
-              codesign -dv --verbose=2 "$APP_PATH" 2>&1 | sed -n '1,120p' || true
-              for fw in "$APP_PATH/Frameworks/"*.framework; do
-                [ -e "$fw" ] || continue
-                echo "codesign: $fw"
-                codesign -dv --verbose=2 "$fw" 2>&1 | sed -n '1,120p' || true
-              done
-            fi
-          fi
+
           xcodebuild -exportArchive \
             -archivePath "$RUNNER_TEMP/App.xcarchive" \
             -exportPath "$RUNNER_TEMP/ipa" \
@@ -279,12 +143,10 @@ jobs:
             -allowProvisioningUpdates \
             -authenticationKeyPath "$XCODE_AUTH_KEY_PATH" \
             -authenticationKeyID "$XCODE_AUTH_KEY_ID" \
-            -authenticationKeyIssuerID "$XCODE_AUTH_ISSUER_ID" \
-            -verbose
+            -authenticationKeyIssuerID "$XCODE_AUTH_ISSUER_ID"
 
       - name: Install fastlane
-        run: |
-          sudo gem install fastlane
+        run: sudo gem install fastlane
 
       - name: Upload to TestFlight
         env:
@@ -308,8 +170,7 @@ jobs:
             fi
           }
           printf '%s' "$APPSTORE_API_KEY_P8_BASE64" | decode_b64 > "$KEY_P8"
-
-          KEY_P8_PATH="$KEY_P8" KEY_JSON_PATH="$KEY_JSON" python3 -c 'import json,os; key=open(os.environ["KEY_P8_PATH"],"r",encoding="utf-8").read(); json.dump({"key_id":os.environ["APPSTORE_KEY_ID"],"issuer_id":os.environ["APPSTORE_ISSUER_ID"],"key":key,"in_house":False}, open(os.environ["KEY_JSON_PATH"],"w",encoding="utf-8"))'
+          python3 -c "import json,os; key=open('$KEY_P8','r',encoding='utf-8').read(); json.dump({'key_id': '${APPSTORE_KEY_ID}', 'issuer_id': '${APPSTORE_ISSUER_ID}', 'key': key, 'in_house': False}, open('$KEY_JSON','w'))"
           fastlane pilot upload --ipa "$IPA_PATH" --api_key_path "$KEY_JSON" --skip_waiting_for_build_processing true
 
       - name: Upload artifact
