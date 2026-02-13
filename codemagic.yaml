@@ -20,6 +20,7 @@ workflows:
         script: |
           npm install
           npm run build
+          npx cap add ios
           npx cap sync ios
       - name: Set up keychain
         script: keychain initialize

@@ -11,6 +11,7 @@
     "server:check": "npm --workspace server/app run check",
     "client:dev": "npm --workspace client/app run dev --",
     "client:build": "npm --workspace client/app run build",
+    "build": "vite build",
     "client:check": "npm --workspace client/app run check"
   },
   "devDependencies": {
