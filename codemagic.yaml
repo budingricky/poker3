@@ -1,0 +1,39 @@
+workflows:
+  ios-workflow:
+    name: iOS Build & Release
+    max_build_duration: 120
+    instance_type: mac_mini_m1
+    environment:
+      # 👇 这一段是新增的，必须要有，名字要和你刚才在网页上创建的组名一模一样！
+      groups:
+        - apple_credentials
+      node: 20
+      xcode: latest
+      cocoapods: default
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+    scripts:
+      - name: Install dependencies
+        script: |
+          npm install
+          npm run build
+          npx cap sync ios
+      - name: Set up keychain
+        script: keychain initialize
+      - name: Fetch signing files
+        script: |
+          # 因为上面引入了 groups，这里才能读到你的账号密码
+          app-store-connect fetch-signing-files $(xcode-project bundle-id) --type IOS_APP_STORE --create
+          keychain add-certificates
+      - name: Set up code signing settings on Xcode project
+        script: xcode-project use-profiles
+      - name: Build ipa for distribution
+        script: |
+          xcode-project build-ipa \
+            --workspace "ios/App/App.xcworkspace" \
+            --scheme "App"
+    artifacts:
+      - build/ios/ipa/*.ipa
