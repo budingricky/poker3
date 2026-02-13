@@ -187,6 +187,8 @@ jobs:
           sudo gem install cocoapods
 
       - name: Pod install
+        env:
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           cd "$IOS_DIR"
           pod install --repo-update
@@ -229,11 +231,6 @@ jobs:
             <string>app-store-connect</string>
             <key>teamID</key>
             <string>${TEAM_ID}</string>
-            <key>provisioningProfiles</key>
-            <dict>
-              <key>${BUNDLE_ID}</key>
-              <string>${PROFILE_NAME}</string>
-            </dict>
             <key>destination</key>
             <string>export</string>
             <key>stripSwiftSymbols</key>
