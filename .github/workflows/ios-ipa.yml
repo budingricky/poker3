@@ -193,23 +193,23 @@ jobs:
             # 项目已配置为手动签名，需要指定证书和 provisioning profile
             # 使用目标特定的语法确保设置只应用于 App 目标
             xcodebuild -workspace App.xcworkspace \
-       -scheme App \
-       -configuration Release \
-       -sdk iphoneos \
-       -destination 'generic/platform=iOS' \
-       -archivePath "$RUNNER_TEMP/App.xcarchive" \
-       "App/OTHER_CODE_SIGN_FLAGS"="--keychain $KEYCHAIN_PATH" \
-       "App/CODE_SIGN_IDENTITY"="$CERT_NAME" \
-       "App/DEVELOPMENT_TEAM"="$TEAM_ID" \
-       "App/PRODUCT_BUNDLE_IDENTIFIER"="$BUNDLE_ID" \
-       "App/MARKETING_VERSION"="$VERSION" \
-       "App/CURRENT_PROJECT_VERSION"="$BUILD_NUMBER" \
-       "App/PROVISIONING_PROFILE_SPECIFIER"="$PROFILE_UUID" \
-       -allowProvisioningUpdates \
-       -authenticationKeyPath "$XCODE_AUTH_KEY_PATH" \
-       -authenticationKeyID "$XCODE_AUTH_KEY_ID" \
-       -authenticationKeyIssuerID "$XCODE_AUTH_ISSUER_ID" \
-       archive
+              -scheme App \
+              -configuration Release \
+              -sdk iphoneos \
+              -destination 'generic/platform=iOS' \
+              -archivePath "$RUNNER_TEMP/App.xcarchive" \
+              "App/OTHER_CODE_SIGN_FLAGS"="--keychain $KEYCHAIN_PATH" \
+              "App/CODE_SIGN_IDENTITY"="$CERT_NAME" \
+              "App/DEVELOPMENT_TEAM"="$TEAM_ID" \
+              "App/PRODUCT_BUNDLE_IDENTIFIER"="$BUNDLE_ID" \
+              "App/MARKETING_VERSION"="$VERSION" \
+              "App/CURRENT_PROJECT_VERSION"="$BUILD_NUMBER" \
+              "App/PROVISIONING_PROFILE_SPECIFIER"="$PROFILE_UUID" \
+              -allowProvisioningUpdates \
+              -authenticationKeyPath "$XCODE_AUTH_KEY_PATH" \
+              -authenticationKeyID "$XCODE_AUTH_KEY_ID" \
+              -authenticationKeyIssuerID "$XCODE_AUTH_ISSUER_ID" \
+              archive
           else
             echo "No certificate found, using automatic signing"
             xcodebuild -workspace App.xcworkspace \
