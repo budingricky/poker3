@@ -16,6 +16,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "15.3"
+
+      - name: Xcode version
+        run: xcodebuild -version
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -113,6 +121,23 @@ jobs:
           echo "PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
           echo "PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
           echo "PBXPROJ_PATH=$GITHUB_WORKSPACE/client/app/ios/App/App.xcodeproj/project.pbxproj" >> "$GITHUB_ENV"
+
+      - name: Signing debug
+        run: |
+          set -euo pipefail
+          echo "Keychain: $KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
+          echo "Provisioning Profiles dir:"
+          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles" || true
+          if [ -n "${PROFILE_UUID:-}" ] && [ -f "$HOME/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.mobileprovision" ]; then
+            security cms -D -i "$HOME/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.mobileprovision" > "$RUNNER_TEMP/profile_debug.plist"
+            echo "Profile Name:"
+            /usr/libexec/PlistBuddy -c 'Print :Name' "$RUNNER_TEMP/profile_debug.plist" || true
+            echo "Profile TeamIdentifier:"
+            /usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$RUNNER_TEMP/profile_debug.plist" || true
+            echo "Profile Entitlements application-identifier:"
+            /usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$RUNNER_TEMP/profile_debug.plist" || true
+          fi
 
       - name: Patch Xcode project signing (App target only)
         run: |
@@ -229,6 +254,8 @@ jobs:
           <dict>
             <key>method</key>
             <string>app-store-connect</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
             <key>teamID</key>
             <string>${TEAM_ID}</string>
             <key>destination</key>
@@ -241,10 +268,25 @@ jobs:
           </plist>
           EOF
           plutil -lint "$EXPORT_PLIST"
+          if [ -d "$RUNNER_TEMP/App.xcarchive/Products/Applications" ]; then
+            APP_PATH="$(find "$RUNNER_TEMP/App.xcarchive/Products/Applications" -maxdepth 1 -name "*.app" | head -n 1 || true)"
+            if [ -n "${APP_PATH:-}" ]; then
+              echo "Archive app: $APP_PATH"
+              echo "Embedded frameworks:"
+              ls -la "$APP_PATH/Frameworks" || true
+              codesign -dv --verbose=2 "$APP_PATH" 2>&1 | sed -n '1,120p' || true
+              for fw in "$APP_PATH/Frameworks/"*.framework; do
+                [ -e "$fw" ] || continue
+                echo "codesign: $fw"
+                codesign -dv --verbose=2 "$fw" 2>&1 | sed -n '1,120p' || true
+              done
+            fi
+          fi
           xcodebuild -exportArchive \
             -archivePath "$RUNNER_TEMP/App.xcarchive" \
             -exportPath "$RUNNER_TEMP/ipa" \
-            -exportOptionsPlist "$EXPORT_PLIST"
+            -exportOptionsPlist "$EXPORT_PLIST" \
+            -verbose
 
       - name: Install fastlane
         run: |
