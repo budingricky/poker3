@@ -119,6 +119,7 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import os, re
+
           path = os.environ["PBXPROJ_PATH"]
           team = os.environ["TEAM_ID"]
           bundle = os.environ["BUNDLE_ID"]
@@ -129,24 +130,54 @@ jobs:
 
           data = data.replace("ProvisioningStyle = Automatic;", "ProvisioningStyle = Manual;")
 
-          def patch_block(m: re.Match) -> str:
-            before = m.group(1)
-            indent = m.group(2)
-            after = m.group(3)
-            insertion = (
+          def strip_key(s: str, key: str) -> str:
+            return re.sub(rf"^[ \\t]*{re.escape(key)}[ \\t]*=[^;]*;\\s*\\n?", "", s, flags=re.M)
+
+          def patch_build_settings(body: str) -> str:
+            if "INFOPLIST_FILE = App/Info.plist;" not in body:
+              return body
+
+            indent_match = re.search(r"^(\\s+)\\w+\\s*=\\s*[^;]+;\\s*$", body, flags=re.M)
+            indent = indent_match.group(1) if indent_match else "\\t\\t\\t\\t"
+
+            for k in [
+              "CODE_SIGN_STYLE",
+              "CODE_SIGN_IDENTITY",
+              "DEVELOPMENT_TEAM",
+              "PRODUCT_BUNDLE_IDENTIFIER",
+              "PROVISIONING_PROFILE_SPECIFIER",
+              "PROVISIONING_PROFILE",
+            ]:
+              body = strip_key(body, k)
+
+            insert = (
               f"{indent}CODE_SIGN_STYLE = Manual;\\n"
               f"{indent}CODE_SIGN_IDENTITY = \\\"Apple Distribution\\\";\\n"
               f"{indent}DEVELOPMENT_TEAM = {team};\\n"
               f"{indent}PRODUCT_BUNDLE_IDENTIFIER = {bundle};\\n"
               f"{indent}PROVISIONING_PROFILE_SPECIFIER = \\\"{profile_name}\\\";\\n"
             )
-            return before + insertion + after
 
-          pattern = re.compile(r"(\\bbuildSettings\\s*=\\s*\\{[\\s\\S]*?)(\\t\\t\\t\\t)CODE_SIGN_STYLE\\s*=\\s*Automatic;\\n([\\s\\S]*?\\n\\t\\t\\t\\};)", re.M)
-          data2, n = pattern.subn(patch_block, data)
-          if n == 0:
-            raise SystemExit("Failed to patch CODE_SIGN_STYLE in pbxproj")
-          data = data2
+            body = body.rstrip() + "\\n" + insert
+            if not body.endswith("\\n"):
+              body += "\\n"
+            return body
+
+          pattern = re.compile(r"(buildSettings\\s*=\\s*\\{\\n)([\\s\\S]*?)(\\n\\s*\\};)", re.M)
+          patched_count = 0
+
+          def repl(m: re.Match) -> str:
+            nonlocal patched_count
+            head, body, tail = m.group(1), m.group(2), m.group(3)
+            new_body = patch_build_settings(body)
+            if new_body != body:
+              patched_count += 1
+            return head + new_body + tail
+
+          data = pattern.sub(repl, data)
+
+          if patched_count == 0:
+            raise SystemExit("Failed to patch App build settings in pbxproj (INFOPLIST_FILE match not found)")
 
           with open(path, "w", encoding="utf-8") as f:
             f.write(data)
