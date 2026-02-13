@@ -16,7 +16,7 @@ export default defineConfig(({ command }) => {
 
   return {
     base: command === 'build' ? './' : '/',
-    plugins: [react(), tsconfigPaths()],
+    plugins: [react(), tsconfigPaths({ projects: ['./tsconfig.json'] })],
     server: {
       host: true,
       port: 5173,

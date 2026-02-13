@@ -80,9 +80,9 @@ iOS 的 IPA **无法在 Windows 本地构建**（Apple 工具链 `xcodebuild` / 
 在 PowerShell 执行（路径改成你的真实文件）：
 
 ```powershell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\ios_distribution.p12")) | Set-Content -NoNewline ios_p12.b64.txt
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\AppStore.mobileprovision")) | Set-Content -NoNewline ios_profile.b64.txt
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\AuthKey_XXXXXXXXXX.p8")) | Set-Content -NoNewline appstore_key_p8.b64.txt
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\ios_distribution.p12")) | Out-File -Encoding ascii -NoNewline ios_p12.b64.txt
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\AppStore.mobileprovision")) | Out-File -Encoding ascii -NoNewline ios_profile.b64.txt
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\AuthKey_XXXXXXXXXX.p8")) | Out-File -Encoding ascii -NoNewline appstore_key_p8.b64.txt
 ```
 
 把生成的 `*.b64.txt` 内容复制到对应的 GitHub Secrets。

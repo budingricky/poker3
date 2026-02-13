@@ -74,8 +74,10 @@ jobs:
               base64 -D
             fi
           }
-          echo "$IOS_CERT_P12_BASE64" | decode_b64 > "$CERT_P12_PATH"
-          echo "$IOS_PROVISIONING_PROFILE_BASE64" | decode_b64 > "$PROFILE_PATH"
+          printf '%s' "$IOS_CERT_P12_BASE64" | decode_b64 > "$CERT_P12_PATH"
+          printf '%s' "$IOS_PROVISIONING_PROFILE_BASE64" | decode_b64 > "$PROFILE_PATH"
+
+          openssl pkcs12 -in "$CERT_P12_PATH" -passin "pass:$IOS_CERT_PASSWORD" -info -noout >/dev/null
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
@@ -149,7 +151,7 @@ jobs:
               base64 -D
             fi
           }
-          echo "$APPSTORE_API_KEY_P8_BASE64" | decode_b64 > "$KEY_P8"
+          printf '%s' "$APPSTORE_API_KEY_P8_BASE64" | decode_b64 > "$KEY_P8"
 
           KEY_P8_PATH="$KEY_P8" KEY_JSON_PATH="$KEY_JSON" python3 -c 'import json,os; key=open(os.environ["KEY_P8_PATH"],"r",encoding="utf-8").read(); json.dump({"key_id":os.environ["APPSTORE_KEY_ID"],"issuer_id":os.environ["APPSTORE_ISSUER_ID"],"key":key,"in_house":False}, open(os.environ["KEY_JSON_PATH"],"w",encoding="utf-8"))'
           fastlane pilot upload --ipa "$IPA_PATH" --api_key_path "$KEY_JSON" --skip_waiting_for_build_processing true
