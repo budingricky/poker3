@@ -1,6 +1,6 @@
 workflows:
   ios-terminator-build:
-    name: 💀 Terminator Build (Force Clean)
+    name: "💀 Terminator Build (Force Clean)"
     max_build_duration: 120
     instance_type: mac_mini_m1
     environment:
@@ -15,14 +15,14 @@ workflows:
       branch_patterns:
         - pattern: main
     scripts:
-      - name: 🧹 PRE-FLIGHT: Nuke Everything (强制清理)
+      - name: "🧹 PRE-FLIGHT: Nuke Everything (Force Clean)"
         script: |
-          echo "⚠️ 正在启动核弹清理程序..."
+          echo "⚠️ Starting nuclear clean-up..."
           
-          # 1. 下载当前所有的发布证书列表 (JSON格式)
+          # 1. 下载当前所有的发布证书列表
           app-store-connect certificates list --type IOS_DISTRIBUTION --save-to-file certs.json
           
-          # 2. 使用 Python 解析列表并逐个撤销 (Revoke)
+          # 2. 使用 Python 解析列表并逐个撤销
           python3 -c "
           import json, os
           try:
@@ -30,19 +30,19 @@ workflows:
                   data = json.load(f)
                   certs = data.get('data', [])
                   if not certs:
-                      print('✅ 没有发现幽灵证书，环境干净。')
+                      print('✅ No ghost certificates found.')
                   for cert in certs:
                       cert_id = cert['id']
-                      print(f'🚫 发现幽灵证书: {cert_id}，正在销毁...')
+                      print(f'🚫 Revoking ghost certificate: {cert_id}...')
                       os.system(f'app-store-connect certificates revoke --id {cert_id}')
           except Exception as e:
-              print(f'处理证书时出错 (可能已经是干净的): {e}')
+              print(f'Error processing certs: {e}')
           "
 
-          # 3. 下载所有的描述文件 (Profiles)
+          # 3. 下载所有的描述文件
           app-store-connect profiles list --type IOS_APP_STORE --save-to-file profiles.json
           
-          # 4. 删除所有相关的描述文件 (防止它关联到旧证书)
+          # 4. 删除所有相关的描述文件
           python3 -c "
           import json, os
           try:
@@ -51,36 +51,34 @@ workflows:
                   profiles = data.get('data', [])
                   for p in profiles:
                       p_id = p['id']
-                      # 这里为了保险，把所有的发布描述文件都删了，反正会自动重建
-                      print(f'🗑️ 删除旧描述文件: {p_id}...')
+                      print(f'🗑️ Deleting profile: {p_id}...')
                       os.system(f'app-store-connect profiles delete --id {p_id}')
           except:
               pass
           "
-          echo "✅ 清理完成！Apple 后台现在是一片废墟，准备重建。"
+          echo "✅ Clean up complete. Ready to rebuild."
 
-      - name: Install & Build Web
+      - name: "Install & Build Web"
         script: |
           cd client/app
           npm install
           npm run build
           npx cap sync ios
 
-      - name: Initialize Keychain
+      - name: "Initialize Keychain"
         script: keychain initialize
 
-      - name: Auto Code Signing (Force New)
+      - name: "Auto Code Signing (Force New)"
         script: |
-          # 此时环境已真空，这行命令必定会创建新证书
           PROJECT_PATH="client/app/ios/App/App.xcodeproj"
           APP_ID=$(xcode-project detect-bundle-id --project "$PROJECT_PATH")
           
-          # --create 参数现在会畅通无阻
+          # 强制创建新证书
           app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
           
           keychain add-certificates
 
-      - name: Build IPA
+      - name: "Build IPA"
         script: |
           xcode-project use-profiles --project "client/app/ios/App/App.xcodeproj"
           xcode-project build-ipa \
