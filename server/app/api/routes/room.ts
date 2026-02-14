@@ -16,6 +16,30 @@ router.get('/', (req: Request, res: Response) => {
   }
 });
 
+// Add AI Bot
+router.post('/add-bot', (req: Request, res: Response) => {
+  try {
+    const { roomId, playerId } = req.body
+    if (!roomId || !playerId) {
+      res.status(400).json({ success: false, error: '缺少必要参数' })
+      return
+    }
+    const room = roomService.getRoom(roomId)
+    if (!room) {
+        res.status(404).json({ success: false, error: '房间未找到' })
+        return
+    }
+    if (room.hostId !== playerId) {
+        res.status(403).json({ success: false, error: '仅房主可添加AI' })
+        return
+    }
+    const bot = gameService.addBot(roomId)
+    res.json({ success: true, data: { bot } })
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: error.message })
+  }
+})
+
 // Start Game
 router.post('/start', (req: Request, res: Response) => {
   try {
@@ -251,6 +275,36 @@ router.post('/take_hole', (req: Request, res: Response) => {
     res.status(400).json({ success: false, error: error.message });
   }
 });
+
+// Surrender
+router.post('/surrender', (req: Request, res: Response) => {
+  try {
+    const { roomId, playerId } = req.body
+    if (!roomId || !playerId) {
+      res.status(400).json({ success: false, error: '缺少必要参数' })
+      return
+    }
+    gameService.surrender(roomId, playerId)
+    res.json({ success: true, data: { status: 'surrendered' } })
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: error.message })
+  }
+})
+
+// Confirm Continue
+router.post('/confirm_continue', (req: Request, res: Response) => {
+  try {
+    const { roomId, playerId } = req.body
+    if (!roomId || !playerId) {
+      res.status(400).json({ success: false, error: '缺少必要参数' })
+      return
+    }
+    gameService.confirmContinue(roomId, playerId)
+    res.json({ success: true, data: { status: 'confirmed' } })
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: error.message })
+  }
+})
 
 // Get room details
 router.get('/:roomId', (req: Request, res: Response) => {

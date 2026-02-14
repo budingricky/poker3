@@ -175,6 +175,22 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
       window.setTimeout(() => setToast(null), 1600)
       loadGameState()
     }
+    const onBidMade = (data: any) => {
+      const pid = data?.playerId
+      const score = data?.score
+      const forced = data?.forced
+      const player = gameState?.otherPlayers.find((p: any) => p.id === pid)
+      const name = pid === playerId ? myName : (player?.name || '未知')
+      
+      let msg = ''
+      if (score === 0) msg = '不叫'
+      else msg = `叫了 ${score} 分`
+      if (forced) msg += ' (强制)'
+      
+      setToast(`${name} ${msg}`)
+      window.setTimeout(() => setToast(null), 2000)
+      loadGameState()
+    }
 
     socket.on('game_update', onGameUpdate);
     socket.on('game_started', () => {
@@ -190,6 +206,7 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
     socket.on('max_play', onMaxPlay);
     socket.on('next_round_ready', onNextRoundReady);
     socket.on('undo', onUndo);
+    socket.on('bid_made', onBidMade);
     socket.on('room_update', onRoomUpdate);
 
     socket.on('room_closed', onRoomClosed);
@@ -211,10 +228,11 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
         socket.off('max_play', onMaxPlay);
         socket.off('next_round_ready', onNextRoundReady);
         socket.off('undo', onUndo);
+        socket.off('bid_made', onBidMade);
         socket.off('room_update', onRoomUpdate);
         socket.off('room_closed', onRoomClosed);
     };
-  }, [roomId, playerId, navigate]);
+  }, [roomId, playerId, navigate, gameState]); // Add gameState dependency to access names
 
   useEffect(() => {
     const onResize = () => setViewportWidth(window.innerWidth)
@@ -463,7 +481,7 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
       </div>
 
       {/* Top Info */}
-      <div className="flex justify-between p-4 z-10 text-white/90 text-sm md:text-base shadow-sm bg-black/10 backdrop-blur-sm">
+      <div className="flex justify-between p-4 z-10 text-white/90 text-sm md:text-base shadow-sm bg-black/10 backdrop-blur-sm relative">
         <div>
             <div className="font-bold text-lg text-yellow-100 drop-shadow-md">
                 阶段：
@@ -484,6 +502,19 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
                 </div>
             )}
         </div>
+
+        {/* Persistent Hole Cards (Top Left) */}
+        {gameState.initialHoleCards && gameState.initialHoleCards.length > 0 && ['PLAYING', 'SURRENDER'].includes(gameState.phase) && (
+            <div className="absolute left-[140px] top-3 flex flex-col items-start opacity-90 pointer-events-none z-20">
+                <div className="text-white/40 text-[10px] mb-0.5 ml-1">底牌</div>
+                <div className="flex gap-0.5 scale-50 origin-top-left">
+                    {gameState.initialHoleCards.map((c: any) => (
+                        <Card key={c.code} code={c.code} />
+                    ))}
+                </div>
+            </div>
+        )}
+
         <div className="text-right">
             <div className="text-[11px] text-white/70 mb-1">
               WS: {wsReadyState === 1 ? '已连接' : '重连中'}
@@ -503,12 +534,75 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
                     <span className="text-green-300 animate-pulse">👉 你的回合</span>
                 ) : (
                     <span className="text-gray-300">
-                        等待 {gameState.otherPlayers.find((p:any) => p.id === gameState.currentTurn)?.name || '他人'}...
+                        等待 {gameState.otherPlayers.find((p:any) => p.id === gameState.currentTurn)?.name || (gameState.currentTurn === playerId ? myName : '他人')}...
                     </span>
                 )}
             </div>
         </div>
       </div>
+
+      {/* Surrender Phase UI (Centered on table, non-modal) */}
+      {gameState.phase === 'SURRENDER' && (
+        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center pointer-events-none gap-8">
+            
+            {/* Show Hole Cards if Digger */}
+            {gameState.diggerId === playerId && gameState.initialHoleCards && (
+                <div className="flex justify-center gap-1 pointer-events-auto p-2 bg-black/40 rounded-xl backdrop-blur-sm">
+                    <div className="text-white/80 text-xs mr-2 flex items-center">底牌</div>
+                    {gameState.initialHoleCards.map((c: any) => (
+                        <div key={c.code} className="transform scale-75 origin-center">
+                            <Card code={c.code} />
+                        </div>
+                    ))}
+                </div>
+            )}
+            
+            <div className="flex gap-12 pointer-events-auto">
+              <button
+                disabled={isActing}
+                onClick={async () => {
+                  if (isActing) return
+                  setIsActing(true)
+                  try {
+                    await api.surrender(roomId, playerId)
+                  } catch (e) {
+                    alert('操作失败')
+                  } finally {
+                    setIsActing(false)
+                  }
+                }}
+                className="flex flex-col items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-red-500 to-red-700 hover:from-red-400 hover:to-red-600 text-white shadow-xl active:scale-95 transition-all border-2 border-white/20 group hover:scale-105 disabled:opacity-50 disabled:grayscale"
+              >
+                <span className="text-2xl mb-0.5 group-hover:scale-110 transition-transform">🏳️</span>
+                <span className="font-bold text-sm">弃牌</span>
+              </button>
+              
+              <button
+                disabled={isActing}
+                onClick={async () => {
+                  if (isActing) return
+                  setIsActing(true)
+                  try {
+                    await api.confirmContinue(roomId, playerId)
+                    await loadGameState()
+                  } catch (e) {
+                    alert('操作失败')
+                  } finally {
+                    setIsActing(false)
+                  }
+                }}
+                className="flex flex-col items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-green-500 to-green-700 hover:from-green-400 hover:to-green-600 text-white shadow-xl active:scale-95 transition-all border-2 border-white/20 group hover:scale-105 disabled:opacity-50 disabled:grayscale"
+              >
+                <span className="text-2xl mb-0.5 group-hover:scale-110 transition-transform">⚔️</span>
+                <span className="font-bold text-sm">继续</span>
+              </button>
+            </div>
+
+            <div className="text-white/80 text-sm font-bold bg-black/30 px-4 py-1 rounded-full backdrop-blur-sm">
+              {gameState.diggerId === playerId ? '庄家抉择' : '闲家抉择'}
+            </div>
+        </div>
+      )}
 
       {/* Opponents Area */}
       <div className="absolute inset-0 pointer-events-none z-10">
@@ -517,14 +611,14 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
            let posClass = '';
            // Default for 4 players (3 opponents)
            if (total === 3) {
-               if (i === 0) posClass = 'right-2 top-1/2 -translate-y-1/2 flex-col'; // Right
-               if (i === 1) posClass = 'top-16 left-1/2 -translate-x-1/2 flex-row'; // Top
-               if (i === 2) posClass = 'left-2 top-1/2 -translate-y-1/2 flex-col'; // Left
+               if (i === 0) posClass = 'right-1 top-1/2 -translate-y-1/2 flex-col scale-90 origin-right'; // Right
+               if (i === 1) posClass = 'top-14 left-1/2 -translate-x-1/2 flex-row scale-90 origin-top'; // Top
+               if (i === 2) posClass = 'left-1 top-1/2 -translate-y-1/2 flex-col scale-90 origin-left'; // Left
            } else if (total === 2) {
-               if (i === 0) posClass = 'right-2 top-1/2 -translate-y-1/2 flex-col';
-               if (i === 1) posClass = 'left-2 top-1/2 -translate-y-1/2 flex-col';
+               if (i === 0) posClass = 'right-1 top-1/2 -translate-y-1/2 flex-col scale-90 origin-right';
+               if (i === 1) posClass = 'left-1 top-1/2 -translate-y-1/2 flex-col scale-90 origin-left';
            } else if (total === 1) {
-               posClass = 'top-16 left-1/2 -translate-x-1/2 flex-row';
+               posClass = 'top-14 left-1/2 -translate-x-1/2 flex-row scale-90 origin-top';
            }
            
            return (

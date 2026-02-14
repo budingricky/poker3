@@ -19,7 +19,6 @@ export default function OfflineGameTable({ engine, aiMode, deepseekApiKey, onExi
   const [isActing, setIsActing] = useState(false)
   const [holeCards, setHoleCards] = useState<any[]>([])
   const [settlement, setSettlement] = useState<{ winnerId: string; winnerSide?: string } | null>(null)
-  const [settlementMultiplier, setSettlementMultiplier] = useState<number | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth)
   const [noBeatKey, setNoBeatKey] = useState<string | null>(null)
@@ -328,16 +327,16 @@ export default function OfflineGameTable({ engine, aiMode, deepseekApiKey, onExi
   }, [])
 
   useEffect(() => {
+    // Only check for settlement popup trigger
     if (gameState.phase === 'FINISHED' && !settlement?.winnerId && gameState.winnerId) {
       setSettlement({ winnerId: gameState.winnerId, winnerSide: gameState.winnerSide })
-      setSettlementMultiplier(null)
       setSelectedCards([])
     }
+    // If not finished, clear settlement (e.g. new game started)
     if (gameState.phase !== 'FINISHED' && settlement?.winnerId) {
       setSettlement(null)
-      setSettlementMultiplier(null)
     }
-  }, [gameState, settlement?.winnerId])
+  }, [gameState.phase, gameState.winnerId, gameState.winnerSide]) // Removed settlement dependency to avoid loops
 
   useEffect(() => {
     if (engine.roomStatus !== 'PLAYING') return
@@ -547,7 +546,7 @@ export default function OfflineGameTable({ engine, aiMode, deepseekApiKey, onExi
         style={{ backgroundImage: 'radial-gradient(circle, #ffffff 1px, transparent 1px)', backgroundSize: '20px 20px' }}
       />
 
-      <div className="flex justify-between p-4 z-10 text-white/90 text-sm md:text-base shadow-sm bg-black/10 backdrop-blur-sm">
+      <div className="flex justify-between p-4 z-10 text-white/90 text-sm md:text-base shadow-sm bg-black/10 backdrop-blur-sm relative">
         <div>
           <div className="font-bold text-lg text-yellow-100 drop-shadow-md">
             阶段：
@@ -558,7 +557,9 @@ export default function OfflineGameTable({ engine, aiMode, deepseekApiKey, onExi
                   ? '收底牌'
                   : gameState.phase === 'FINISHED'
                     ? '结算'
-                    : '出牌'}
+                    : gameState.phase === 'ENDING'
+                      ? '等待结束'
+                      : '出牌'}
             </span>
           </div>
           {gameState.diggerId && (
@@ -571,6 +572,19 @@ export default function OfflineGameTable({ engine, aiMode, deepseekApiKey, onExi
             </div>
           )}
         </div>
+
+        {/* Persistent Hole Cards (Top Left) */}
+        {gameState.initialHoleCards && gameState.initialHoleCards.length > 0 && gameState.phase === 'PLAYING' && (
+            <div className="absolute left-[140px] top-3 flex flex-col items-start opacity-90 pointer-events-none z-20">
+                <div className="text-white/40 text-[10px] mb-0.5 ml-1">底牌</div>
+                <div className="flex gap-0.5 scale-50 origin-top-left">
+                    {gameState.initialHoleCards.map((c: any) => (
+                        <Card key={c.code} code={c.code} />
+                    ))}
+                </div>
+            </div>
+        )}
+
         <div className="text-right">
           <div className="text-[11px] text-white/70 mb-1">离线模式</div>
           <button
@@ -601,14 +615,14 @@ export default function OfflineGameTable({ engine, aiMode, deepseekApiKey, onExi
            let posClass = '';
            // Default for 4 players (3 opponents)
            if (total === 3) {
-               if (i === 0) posClass = 'right-2 top-1/2 -translate-y-1/2 flex-col'; // Right
-               if (i === 1) posClass = 'top-16 left-1/2 -translate-x-1/2 flex-row'; // Top
-               if (i === 2) posClass = 'left-2 top-1/2 -translate-y-1/2 flex-col'; // Left
+               if (i === 0) posClass = 'right-1 top-1/2 -translate-y-1/2 flex-col scale-90 origin-right'; // Right
+               if (i === 1) posClass = 'top-14 left-1/2 -translate-x-1/2 flex-row scale-90 origin-top'; // Top
+               if (i === 2) posClass = 'left-1 top-1/2 -translate-y-1/2 flex-col scale-90 origin-left'; // Left
            } else if (total === 2) {
-               if (i === 0) posClass = 'right-2 top-1/2 -translate-y-1/2 flex-col';
-               if (i === 1) posClass = 'left-2 top-1/2 -translate-y-1/2 flex-col';
+               if (i === 0) posClass = 'right-1 top-1/2 -translate-y-1/2 flex-col scale-90 origin-right';
+               if (i === 1) posClass = 'left-1 top-1/2 -translate-y-1/2 flex-col scale-90 origin-left';
            } else if (total === 1) {
-               posClass = 'top-16 left-1/2 -translate-x-1/2 flex-row';
+               posClass = 'top-14 left-1/2 -translate-x-1/2 flex-row scale-90 origin-top';
            }
            
            return (
@@ -703,6 +717,8 @@ export default function OfflineGameTable({ engine, aiMode, deepseekApiKey, onExi
           <div className="w-full h-2/3 border-2 border-dashed border-white/10 rounded-3xl m-8" />
         </div>
 
+        {/* Persistent Hole Cards Removed from here */}
+
         <AnimatePresence>
           {holeCards.length > 0 && (
             <motion.div
@@ -750,6 +766,53 @@ export default function OfflineGameTable({ engine, aiMode, deepseekApiKey, onExi
         </AnimatePresence>
       </div>
 
+      {/* Surrender Phase UI (Centered on table, non-modal) */}
+      {gameState.phase === 'SURRENDER' && (
+        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center pointer-events-none gap-8">
+            
+            {/* Show Hole Cards if Digger */}
+            {gameState.diggerId === engine.humanId && gameState.initialHoleCards && (
+                <div className="flex justify-center gap-1 pointer-events-auto p-2 bg-black/40 rounded-xl backdrop-blur-sm">
+                    <div className="text-white/80 text-xs mr-2 flex items-center">底牌</div>
+                    {gameState.initialHoleCards.map((c: any) => (
+                        <div key={c.code} className="transform scale-75 origin-center">
+                            <Card code={c.code} />
+                        </div>
+                    ))}
+                </div>
+            )}
+            
+            <div className="flex gap-12 pointer-events-auto">
+              <button
+                onClick={() => {
+                  engine.surrender(engine.humanId)
+                  sync()
+                }}
+                className="flex flex-col items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-red-500 to-red-700 hover:from-red-400 hover:to-red-600 text-white shadow-xl active:scale-95 transition-all border-2 border-white/20 group hover:scale-105"
+              >
+                <span className="text-2xl mb-0.5 group-hover:scale-110 transition-transform">🏳️</span>
+                <span className="font-bold text-sm">弃牌</span>
+              </button>
+              
+              <button
+                onClick={() => {
+                  engine.confirmContinue(engine.humanId)
+                  sync()
+                }}
+                className="flex flex-col items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-green-500 to-green-700 hover:from-green-400 hover:to-green-600 text-white shadow-xl active:scale-95 transition-all border-2 border-white/20 group hover:scale-105"
+              >
+                <span className="text-2xl mb-0.5 group-hover:scale-110 transition-transform">⚔️</span>
+                <span className="font-bold text-sm">继续</span>
+              </button>
+            </div>
+            
+            <div className="text-white/80 text-sm font-bold bg-black/30 px-4 py-1 rounded-full backdrop-blur-sm">
+              {gameState.diggerId === engine.humanId ? '庄家抉择' : '闲家抉择'}
+            </div>
+        </div>
+      )}
+
+      {/* Action Buttons */}
       <div className="fixed bottom-0 left-0 right-0 z-30 bg-gradient-to-t from-black/70 to-transparent pb-safe">
         {selectedCards.length > 0 && (
           <div className="px-4 pt-2">
@@ -874,32 +937,7 @@ export default function OfflineGameTable({ engine, aiMode, deepseekApiKey, onExi
       </div>
 
       <AnimatePresence>
-        {settlement?.winnerId && settlementMultiplier === null && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
-          >
-            <div className="w-full max-w-md mx-4 rounded-3xl bg-white/95 shadow-2xl p-6">
-              <div className="text-2xl font-extrabold text-slate-900 mb-2">选择本局翻倍</div>
-              <div className="text-slate-700 mb-6">选择后进入结算。</div>
-              <div className="grid grid-cols-4 gap-3">
-                {[1, 2, 4, 8].map(m => (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => setSettlementMultiplier(m)}
-                    className="w-full rounded-2xl bg-slate-900 hover:bg-slate-950 text-white font-extrabold py-3 text-lg"
-                  >
-                    x{m}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </motion.div>
-        )}
-        {settlement?.winnerId && settlementMultiplier !== null && (
+        {settlement?.winnerId && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -908,9 +946,6 @@ export default function OfflineGameTable({ engine, aiMode, deepseekApiKey, onExi
           >
             <div className="w-full max-w-md mx-4 rounded-3xl bg-white/95 shadow-2xl p-6">
               <div className="text-2xl font-extrabold text-slate-900 mb-3">本局结束</div>
-              <div className="text-slate-700 mb-2">
-                翻倍：<span className="font-bold text-slate-900">x{settlementMultiplier}</span>
-              </div>
               <div className="text-slate-700 mb-2">
                 胜者：<span className="font-bold text-slate-900">{winnerName}</span>
               </div>

@@ -1,7 +1,7 @@
 {
   "name": "poker3-client",
   "private": true,
-  "version": "1.7.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -20,16 +20,17 @@
     "tailwind-merge": "^3.0.2"
   },
   "devDependencies": {
-    "@capacitor/android": "^7.4.3",
+    "@capacitor/android": "^6.0.0",
     "@capacitor/assets": "^3.0.5",
-    "@capacitor/cli": "^7.5.0",
-    "@capacitor/core": "^7.5.0",
-    "@capacitor/ios": "^7.5.0",
+    "@capacitor/cli": "^6.0.0",
+    "@capacitor/core": "^6.0.0",
+    "@capacitor/ios": "^6.0.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.4.1",
     "autoprefixer": "^10.4.21",
     "esbuild": "0.27.0",
+    "fs-extra": "^9.1.0",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",
     "typescript": "~5.8.3",

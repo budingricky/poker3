@@ -5,6 +5,7 @@ export interface Player {
   isOnline: boolean;
   socketId?: string;
   joinedAt: number;
+  isBot?: boolean;
   // Game specific
   handCards: string[];
   score: number;

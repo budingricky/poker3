@@ -1,5 +1,5 @@
-import React from 'react'
-import { BrowserRouter as Router, Routes, Route, Navigate, useParams } from 'react-router-dom'
+import React, { useEffect, useRef } from 'react'
+import { BrowserRouter as Router, Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom'
 import ModeSelect from './pages/ModeSelect'
 import Placeholder from './pages/Placeholder'
 import Offline from './pages/Offline'
@@ -13,9 +13,48 @@ function LegacyRoomRedirect() {
   return <Navigate to={roomId ? `/lan/room/${roomId}` : '/lan'} replace />
 }
 
+function MusicManager() {
+    const location = useLocation()
+    const lobbyAudioRef = useRef<HTMLAudioElement | null>(null)
+    const gameAudioRef = useRef<HTMLAudioElement | null>(null)
+
+    useEffect(() => {
+        // Initialize audio elements
+        if (!lobbyAudioRef.current) {
+            lobbyAudioRef.current = new Audio('/music/lobby.mp3')
+            lobbyAudioRef.current.loop = true
+            lobbyAudioRef.current.volume = 0.3
+        }
+        if (!gameAudioRef.current) {
+            gameAudioRef.current = new Audio('/music/game.mp3')
+            gameAudioRef.current.loop = true
+            gameAudioRef.current.volume = 0.3
+        }
+
+        const path = location.pathname
+        const isGame = path.includes('/room/') || path === '/offline'
+        
+        // Handle music switching
+        if (isGame) {
+            lobbyAudioRef.current.pause()
+            gameAudioRef.current.play().catch(() => {})
+        } else {
+            gameAudioRef.current.pause()
+            lobbyAudioRef.current.play().catch(() => {})
+        }
+
+        return () => {
+            // Cleanup on unmount (though this component is top-level)
+        }
+    }, [location.pathname])
+
+    return null
+}
+
 function App() {
   return (
     <Router>
+      <MusicManager />
       <div className="min-h-screen bg-gray-50 text-gray-900">
         <Routes>
           <Route path="/" element={<ModeSelect />} />

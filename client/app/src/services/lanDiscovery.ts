@@ -95,19 +95,23 @@ async function discoverViaHttpScan({
 
   const results: DiscoveredServer[] = []
   let index = 0
-  const deadline = Date.now() + 2000
+  // Increased deadline to 6 seconds to cover more IPs
+  const deadline = Date.now() + 6000
 
   async function worker() {
     while (index < candidates.length && Date.now() < deadline && results.length < 3) {
       const i = index
       index += 1
       const baseUrl = candidates[i]
-      const ok = await httpProbe(baseUrl, timeoutMs)
+      // Use slightly shorter timeout for individual probes to scan faster, but respect input if reasonable
+      const probeTimeout = Math.min(timeoutMs, 800) 
+      const ok = await httpProbe(baseUrl, probeTimeout)
       if (ok) results.push(ok)
     }
   }
 
-  await Promise.all(Array.from({ length: maxConcurrency }, () => worker()))
+  // Increased concurrency to 48 for faster scanning
+  await Promise.all(Array.from({ length: 48 }, () => worker()))
   return uniqServers(results)
 }
 

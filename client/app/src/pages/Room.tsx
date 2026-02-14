@@ -155,9 +155,21 @@ export default function Room() {
           ) : (
             <div
               key={`empty-${idx}`}
-              className="bg-gray-100 p-4 rounded-2xl border border-dashed flex items-center justify-center text-gray-400"
+              className={`bg-gray-100 p-4 rounded-2xl border border-dashed flex items-center justify-center text-gray-400 ${
+                  playerId === room.hostId ? 'cursor-pointer hover:bg-gray-200 hover:text-gray-600 transition-colors' : ''
+              }`}
+              onClick={async () => {
+                  if (playerId !== room.hostId) return
+                  if (window.confirm('是否使用AI填补此空位？')) {
+                      try {
+                          await api.addBot(roomId, playerId)
+                      } catch (e) {
+                          alert('添加AI失败')
+                      }
+                  }
+              }}
             >
-              空位
+              {playerId === room.hostId ? '点击添加AI' : '空位'}
             </div>
           ),
         )}

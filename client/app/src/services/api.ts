@@ -70,6 +70,20 @@ export const api = {
       body: JSON.stringify({ roomId, playerId }),
     })
   },
+  surrender: async (roomId: string, playerId: string) => {
+    return fetchJson('/api/room/surrender', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId, playerId }),
+    })
+  },
+  confirmContinue: async (roomId: string, playerId: string) => {
+    return fetchJson('/api/room/confirm_continue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId, playerId }),
+    })
+  },
   playCards: async (roomId: string, playerId: string, cards: string[]) => {
     return fetchJson('/api/room/play', {
       method: 'POST',
@@ -100,6 +114,13 @@ export const api = {
   },
   undo: async (roomId: string, playerId: string) => {
     return fetchJson('/api/room/undo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId, playerId }),
+    })
+  },
+  addBot: async (roomId: string, playerId: string) => {
+    return fetchJson('/api/room/add-bot', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ roomId, playerId }),

@@ -43,7 +43,7 @@ export interface RoundSettlement {
   createdAt: number
 }
 
-export type Phase = 'BIDDING' | 'TAKING_HOLE' | 'PLAYING' | 'FINISHED'
+export type Phase = 'BIDDING' | 'TAKING_HOLE' | 'SURRENDER' | 'PLAYING' | 'ENDING' | 'FINISHED'
 export type Difficulty = 'easy' | 'normal' | 'hard'
 
 export interface OfflinePlayer {
@@ -87,12 +87,13 @@ export interface OfflineGameView {
   diggerId: string | null
   lastMove: LastMove | null
   holeCards: Card[]
+  initialHoleCards: Card[]
   winnerId: string | null
   winnerSide?: 'DIGGER' | 'OTHERS'
   nextRoundReady: string[]
 }
 
-export type EngineActionType = 'start' | 'bid' | 'take_hole' | 'play' | 'pass' | 'undo'
+export type EngineActionType = 'start' | 'bid' | 'take_hole' | 'play' | 'pass' | 'undo' | 'surrender' | 'continue'
 
 export interface EngineAction {
   seq: number
@@ -297,6 +298,7 @@ export class OfflineEngine {
   phase: Phase = 'BIDDING'
   deck: Card[] = []
   holeCards: Card[] = []
+  initialHoleCards: Card[] = []
   playersHand: Record<string, Card[]> = {}
   playedCardsByPlayer: Record<string, Card[]> = {}
   playedMovesByPlayer: Record<string, PlayedMove[]> = {}
@@ -351,6 +353,7 @@ export class OfflineEngine {
     this.phase = 'BIDDING'
     this.deck = []
     this.holeCards = []
+    this.initialHoleCards = []
     this.playersHand = {}
     this.playedCardsByPlayer = {}
     this.playedMovesByPlayer = {}
@@ -390,6 +393,7 @@ export class OfflineEngine {
       this.bidByPlayer[p.id] = null
     }
     this.holeCards = deck.slice(idx)
+    this.initialHoleCards = [...this.holeCards]
     this.deck = [...this.holeCards]
 
     this.bidScore = 0
@@ -453,11 +457,87 @@ export class OfflineEngine {
       hand.push(...hole)
       this.playersHand[playerId] = sortCards(hand)
     }
+    
+    // Store hole cards for persistent display
+    this.initialHoleCards = [...hole]
     this.deck = []
-    this.phase = 'PLAYING'
+    
+    this.phase = 'SURRENDER'
     this.passCount = 0
     this.lastMove = null
-    this.currentTurn = this.findHeart4Owner()
+    this.currentTurn = this.diggerId!
+  }
+
+  surrender(playerId: string) {
+      if (this.phase !== 'SURRENDER') throw new Error('Not in surrender phase')
+      // Immediate loss
+      this.setAction({ type: 'surrender', playerId })
+      this.finishGameSurrender(playerId)
+  }
+
+  confirmContinue(playerId: string) {
+      if (this.phase !== 'SURRENDER') throw new Error('Not in surrender phase')
+      // For offline single player, if human clicks continue, we assume all AIs continue.
+      this.setAction({ type: 'continue', playerId })
+      this.phase = 'PLAYING'
+      this.currentTurn = this.findHeart4Owner()
+  }
+
+  private finishGameSurrender(surrenderPlayerId: string) {
+      this.phase = 'FINISHED'
+      this.roomStatus = 'FINISHED'
+      
+      const isDiggerSurrender = surrenderPlayerId === this.diggerId
+      // If Digger surrenders, Digger loses (Winner = Others)
+      // If Peasant surrenders, Digger wins (Winner = Digger)
+      
+      this.winnerSide = isDiggerSurrender ? 'OTHERS' : 'DIGGER'
+      // WinnerId? If Others win, who is winnerId? Maybe null or just one of them.
+      // If Digger wins, winnerId = diggerId.
+      this.winnerId = isDiggerSurrender ? this.players.find(p => p.id !== this.diggerId)?.id || '' : this.diggerId
+      
+      if (this.diggerId) {
+        const bid = typeof this.bidScore === 'number' ? this.bidScore : 0
+        // Rules: 4->3, 3->2, 2->2, 1->1
+        let base = bid
+        if (bid === 4) base = 3
+        else if (bid === 3) base = 2
+        else if (bid === 2) base = 2
+        else if (bid === 1) base = 1
+        
+        const othersCount = Math.max(0, this.players.length - 1)
+        const round = this.settlementHistory.length + 1
+        const results: RoundPlayerResult[] = this.players.map(p => {
+          const isDigger = p.id === this.diggerId
+          // If winnerSide is DIGGER: Digger gets +base*others, Others get -base
+          // If winnerSide is OTHERS: Digger gets -base*others, Others get +base
+          
+          const isWinner = this.winnerSide === 'DIGGER' ? isDigger : !isDigger
+          
+          const delta =
+            this.winnerSide === 'DIGGER'
+              ? isDigger
+                ? base * othersCount
+                : -base
+              : isDigger
+                ? -base * othersCount
+                : base
+                
+          this.totalScoreByPlayer[p.id] = (this.totalScoreByPlayer[p.id] || 0) + delta
+          return { playerId: p.id, name: p.name, delta, isWinner }
+        })
+        
+        this.settlementHistory.push({
+          round,
+          bidScore: base, // Use modified base
+          diggerId: this.diggerId,
+          winnerId: this.winnerId!,
+          winnerSide: this.winnerSide,
+          results,
+          createdAt: Date.now(),
+        })
+      }
+      this.currentTurn = surrenderPlayerId
   }
 
   playCards(playerId: string, cardCodes: string[]) {
@@ -492,6 +572,32 @@ export class OfflineEngine {
     this.passCount = 0
 
     if (this.playersHand[playerId].length === 0) {
+      this.phase = 'ENDING'
+      this.currentTurn = '' // Block moves
+      this.undo = null
+      this.setAction({ type: 'play', playerId, isMax: false })
+      
+      // Delay finishing
+      setTimeout(() => {
+          // Double check if not already finished (avoid race conditions)
+          if (this.roomStatus !== 'FINISHED') {
+              this.finishGame(playerId)
+          }
+      }, 3000)
+      return
+    }
+
+    const isMax = this.isCurrentMoveMax(playerId)
+    if (isMax) {
+      this.currentTurn = playerId
+      this.setAction({ type: 'play', playerId, isMax: true })
+      return
+    }
+    this.setAction({ type: 'play', playerId, isMax: false })
+    this.nextTurn()
+  }
+
+  private finishGame(playerId: string) {
       this.phase = 'FINISHED'
       this.roomStatus = 'FINISHED'
       this.winnerId = playerId
@@ -526,19 +632,6 @@ export class OfflineEngine {
         })
       }
       this.currentTurn = playerId
-      this.undo = null
-      this.setAction({ type: 'play', playerId, isMax: false })
-      return
-    }
-
-    const isMax = this.isCurrentMoveMax(playerId)
-    if (isMax) {
-      this.currentTurn = playerId
-      this.setAction({ type: 'play', playerId, isMax: true })
-      return
-    }
-    this.setAction({ type: 'play', playerId, isMax: false })
-    this.nextTurn()
   }
 
   pass(playerId: string) {
@@ -592,6 +685,14 @@ export class OfflineEngine {
       return this.lastAction
     }
 
+    if (this.phase === 'SURRENDER') {
+        // AI always continues
+        if (playerId !== this.humanId) {
+            this.confirmContinue(playerId)
+            return this.lastAction
+        }
+    }
+
     if (this.phase === 'PLAYING') {
       const hand = this.playersHand[playerId] || []
       const plays = generatePlays(hand).filter(cards => analyzeHand(cards) !== null)
@@ -604,8 +705,19 @@ export class OfflineEngine {
         return this.lastAction
       }
 
-      const chosen = this.choosePlay(legal)
-      this.playCards(playerId, chosen.map(c => c.code))
+      let chosen = this.choosePlay(legal)
+
+      // Safety check: if AI passes but it's a free turn (lead), force play smallest card
+      if (!mustFollow && chosen.length === 0 && hand.length > 0) {
+        const sorted = [...hand].sort((a, b) => a.rank - b.rank)
+        chosen = [sorted[0]]
+      }
+
+      if (chosen.length > 0) {
+        this.playCards(playerId, chosen.map(c => c.code))
+      } else {
+        this.pass(playerId)
+      }
       return this.lastAction
     }
     return this.lastAction
@@ -646,6 +758,7 @@ export class OfflineEngine {
       diggerId: this.diggerId,
       lastMove: this.lastMove,
       holeCards: this.phase === 'TAKING_HOLE' ? this.deck : [],
+      initialHoleCards: this.initialHoleCards,
       winnerId: this.phase === 'FINISHED' ? this.winnerId : null,
       winnerSide: this.phase === 'FINISHED' ? this.winnerSide : undefined,
       nextRoundReady: [],
@@ -796,29 +909,47 @@ export class OfflineEngine {
 
   private chooseBid(playerId: string) {
     const hand = this.playersHand[playerId] || []
-    const strength = hand.reduce((acc, c) => acc + getCompareValue(c.rank), 0)
-    const base = strength / Math.max(1, hand.length)
-    const want =
-      this.difficulty === 'easy'
-        ? base > 7
-          ? 2
-          : 0
-        : this.difficulty === 'normal'
-          ? base > 7
-            ? 3
-            : base > 5
-              ? 2
-              : 0
-          : base > 7
-            ? 4
-            : base > 6
-              ? 3
-              : 1
-    const options = [0, 1, 2, 3, 4].filter(x => x === 0 || x > this.bidScore)
-    const candidates = options.filter(x => x <= want)
-    if (candidates.length > 0) return candidates[candidates.length - 1]
-    if (options.includes(0)) return 0
-    return options[options.length - 1]
+    
+    // Improved Bidding Logic (Ported from Server AI)
+    const counts = new Map<number, number>()
+    let twoCount = 0
+    let jokerCount = 0
+    
+    for (const c of hand) {
+        counts.set(c.rank, (counts.get(c.rank) || 0) + 1)
+        if (c.rank === 15) twoCount++
+        if (c.rank >= 16) jokerCount++
+    }
+    
+    // Basic point system
+    let scorePoints = 0
+    scorePoints += jokerCount * 4 // Jokers are very valuable
+    scorePoints += twoCount * 2 // 2s are valuable
+    scorePoints += (counts.get(14) || 0) * 1 // Aces
+    scorePoints += (counts.get(13) || 0) * 0.5 // Kings
+    
+    // Bomb bonus
+    for (const count of counts.values()) {
+        if (count === 4) scorePoints += 3
+    }
+    
+    let want = 0
+    if (scorePoints > 12) want = 3
+    else if (scorePoints > 8) want = 2
+    else if (scorePoints > 5) want = 1
+    
+    // Aggressive AI for Hard/Normal
+    if (this.difficulty !== 'easy' && Math.random() > 0.7) want += 1
+    
+    // Ensure we bid higher than current if we want to
+    const currentMax = this.bidScore
+    if (want <= currentMax) {
+        // If we really have good cards (want >= 3), maybe push to 3
+        if (want >= 3 && currentMax < 3) return 3
+        return 0 
+    }
+    
+    return Math.min(3, want)
   }
 
 
@@ -1019,6 +1150,33 @@ class MCTSEngine {
         }
     }
     
+    // Fallback: If MCTS found no best move (e.g. 0 visits or no valid children found despite having legal moves),
+    // strictly pick from rootLegal based on heuristic or first available.
+    // This ensures we NEVER return [] (Pass) when we have legal moves in a free turn.
+    if (bestMove.length === 0 && rootLegal.length > 0) {
+         // If we have children but visits were all 0 (or -1?), maxVisits stays -1.
+         // Pick child with max wins? or just first legal.
+         // Let's pick the one with most visits (even if 0) or first.
+         
+         let fallbackBest: Card[] | null = null
+         let fallbackVisits = -999
+         
+         for (const [key, child] of rootNode.children) {
+             if (!rootLegalKeys.has(key)) continue
+             if (child.visits > fallbackVisits) {
+                 fallbackVisits = child.visits
+                 fallbackBest = child.move
+             }
+         }
+         
+         if (fallbackBest) {
+             bestMove = fallbackBest
+         } else {
+             // No children in tree? Just pick first legal move.
+             bestMove = rootLegal[0]
+         }
+    }
+    
     // Log for debugging
     console.log(`MCTS: ${iterations} iterations. Best: ${bestMove.map(c=>c.code).join(',')}`)
     return bestMove
@@ -1101,8 +1259,46 @@ class MCTSEngine {
           // Check win
           if (engine.playersHand[playerId].length === 0) {
               engine.roomStatus = 'FINISHED'
+              engine.phase = 'FINISHED' // Ensure phase is updated to FINISHED
               engine.winnerId = playerId
               if (engine.diggerId) engine.winnerSide = engine.diggerId === playerId ? 'DIGGER' : 'OTHERS'
+              
+              // We need to generate settlement record here for correct state
+              if (engine.diggerId) {
+                  const bid = typeof engine.bidScore === 'number' ? engine.bidScore : 0
+                  // Rules: 4->3, 3->2, 2->2, 1->1
+                  let base = bid
+                  if (bid === 4) base = 3
+                  else if (bid === 3) base = 2
+                  else if (bid === 2) base = 2
+                  else if (bid === 1) base = 1
+                  
+                  const othersCount = Math.max(0, engine.players.length - 1)
+                  const round = engine.settlementHistory.length + 1
+                  const results: RoundPlayerResult[] = engine.players.map(p => {
+                      const isDigger = p.id === engine.diggerId
+                      const isWinner = engine.winnerSide === 'DIGGER' ? isDigger : !isDigger
+                      const delta =
+                          engine.winnerSide === 'DIGGER'
+                              ? isDigger
+                                  ? base * othersCount
+                                  : -base
+                              : isDigger
+                                  ? -base * othersCount
+                                  : base
+                      engine.totalScoreByPlayer[p.id] = (engine.totalScoreByPlayer[p.id] || 0) + delta
+                      return { playerId: p.id, name: p.name, delta, isWinner }
+                  })
+                  engine.settlementHistory.push({
+                      round,
+                      bidScore: base,
+                      diggerId: engine.diggerId,
+                      winnerId: playerId,
+                      winnerSide: engine.winnerSide,
+                      results,
+                      createdAt: Date.now(),
+                  })
+              }
               return
           }
           
@@ -1144,39 +1340,65 @@ class MCTSEngine {
 
   private simulate(state: OfflineEngine) {
       let depth = 0
-      while (state.roomStatus === 'PLAYING' && depth < 60) {
+      const maxDepth = 60
+      
+      while (state.roomStatus === 'PLAYING' && depth < maxDepth) {
           const pid = state.currentTurn
-          const hand = state.playersHand[pid] || []
           const legal = this.getLegalMoves(state, pid)
           
           if (legal.length === 0) {
               this.applyMove(state, pid, [])
           } else {
-              // Heuristic Play:
-              // 1. Prefer playing cards if possible (avoid passing if free play)
-              // 2. Avoid single cards if possible, unless it's a high single
+              // Heuristic Simulation Policy:
+              // 1. If can win immediately, do it.
+              const winningMove = legal.find(m => {
+                  const hand = state.playersHand[pid] || []
+                  return m.length === hand.length
+              })
               
-              let chosen: Card[]
-              if (!state.lastMove || state.lastMove.playerId === pid) {
-                  // Free play
-                  // Try to play longest patterns or smallest non-single
-                  // Filter out singles unless that's all we have
-                  const nonSingles = legal.filter(m => m.length > 1)
-                  if (nonSingles.length > 0) {
-                      // Pick random non-single
-                      chosen = nonSingles[Math.floor(Math.random() * nonSingles.length)]
-                  } else {
-                      // Only singles
-                      chosen = legal[Math.floor(Math.random() * legal.length)]
-                  }
+              if (winningMove) {
+                  this.applyMove(state, pid, winningMove)
               } else {
-                  // Must follow
-                  // Try to win low? Random is fine for now, but weighted random better.
-                  // Prefer passing if we only have high cards and bid is low? Too complex.
-                  // Just random valid move.
-                  chosen = legal[Math.floor(Math.random() * legal.length)]
+                  // 2. Prefer combos over singles to empty hand faster
+                  // 3. Avoid breaking high value cards (Jokers/2s) for weak plays if possible
+                  // Weighted random selection based on move quality
+                  
+                  const weightedMoves = legal.map(m => {
+                      let weight = 1
+                      const pattern = analyzeHand(m)!
+                      
+                      // Prefer playing more cards
+                      weight += m.length * 2
+                      
+                      // Prefer combos
+                      if (['STRAIGHT', 'CONSECUTIVE_PAIRS', 'CONSECUTIVE_TRIPLETS'].includes(pattern.type)) {
+                          weight += 5
+                      }
+                      
+                      // Penalize breaking high cards for single plays
+                      if (pattern.type === 'SINGLE') {
+                          if (pattern.rank >= 15) weight = 0.1 // Avoid playing 2/Joker as single in simulation unless forced
+                          else weight = 0.5
+                      }
+                      
+                      return { move: m, weight }
+                  })
+                  
+                  // Select based on weight
+                  const totalWeight = weightedMoves.reduce((sum, item) => sum + item.weight, 0)
+                  let r = Math.random() * totalWeight
+                  let chosen = legal[0]
+                  
+                  for (const item of weightedMoves) {
+                      r -= item.weight
+                      if (r <= 0) {
+                          chosen = item.move
+                          break
+                      }
+                  }
+                  
+                  this.applyMove(state, pid, chosen)
               }
-              this.applyMove(state, pid, chosen)
           }
           depth++
       }

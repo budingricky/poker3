@@ -39,7 +39,7 @@ export interface GameState {
   playedCardsByPlayer: { [playerId: string]: Card[] };
   playedMovesByPlayer: { [playerId: string]: PlayedMove[] };
   currentTurn: string; // playerId
-  phase: 'BIDDING' | 'TAKING_HOLE' | 'PLAYING' | 'FINISHED';
+  phase: 'BIDDING' | 'TAKING_HOLE' | 'SURRENDER' | 'PLAYING' | 'FINISHED';
   bidScore: number;
   diggerId: string | null;
   biddingStarterId: string;
@@ -49,4 +49,5 @@ export interface GameState {
     cards: Card[];
     pattern: HandPattern;
   } | null;
+  initialHoleCards?: Card[];
 }

@@ -118,7 +118,8 @@ export default function ServerSelect({ mode }: { mode: Mode }) {
     async function run() {
       setDiscovering(true)
       try {
-        const timeoutMs = window.location.protocol === 'https:' ? 650 : 220
+        // Increased timeout to 2000ms to allow sufficient time for UDP broadcast and HTTP scan
+        const timeoutMs = 2000 
         const found = await discoverLanServers({ timeoutMs })
         if (cancelled) return
         setServers(found)

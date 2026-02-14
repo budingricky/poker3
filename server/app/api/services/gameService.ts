@@ -3,6 +3,7 @@ import { Room, Player, RoomStatus } from '../models/types.js';
 import { roomService } from './roomService.js';
 import { socketService } from './socketService.js';
 import { analyzeHand, canBeat, sortCards, getCompareValue } from './gameLogic.js';
+import { computeAiBid, computeAiPlayMove } from '../utils/ai.js';
 
 class GameService {
   private games: Map<string, GameState> = new Map();
@@ -144,6 +145,8 @@ class GameService {
     socketService.broadcast(roomId, 'game_started', { roomId });
     socketService.broadcast(roomId, 'room_update');
 
+    this.scheduleAiTurn(roomId);
+
     return gameState;
   }
 
@@ -216,11 +219,15 @@ class GameService {
           if (game.diggerId === null) {
               game.diggerId = this.getLowestHeartPlayerId(game);
               game.bidScore = 1;
+              // Broadcast the forced bid too?
+              socketService.broadcast(roomId, 'bid_made', { playerId: game.diggerId, score: 1, forced: true });
           }
           this.finalizeBidding(game);
       } else {
           game.currentTurn = room.players[nextPlayerIndex].id;
+          socketService.broadcast(roomId, 'bid_made', { playerId, score });
           socketService.broadcast(roomId, 'game_update');
+          this.scheduleAiTurn(roomId);
       }
   }
 
@@ -233,6 +240,7 @@ class GameService {
 
       socketService.broadcast(game.roomId, 'hole_revealed', { holeCards: game.deck });
       socketService.broadcast(game.roomId, 'game_update');
+      this.scheduleAiTurn(game.roomId);
   }
 
   takeHoleCards(roomId: string, playerId: string) {
@@ -243,19 +251,91 @@ class GameService {
 
       const hole = game.deck || [];
       if (hole.length > 0) {
+          game.initialHoleCards = [...hole]; // Store copy
           const hand = game.playersHand[playerId] || [];
           hand.push(...hole);
           game.playersHand[playerId] = sortCards(hand);
       }
       game.deck = [];
-
-      game.phase = 'PLAYING';
+      
+      // Store hole cards for persistent display (initialHoleCards) before clearing
+      // Wait, game.deck IS initialHoleCards in this logic?
+      // No, in GameState definition, deck is Remaining cards.
+      // But in startGame, deck = holeCards.
+      // So when taking hole, we add to hand, and clear deck.
+      // But we need to keep hole cards somewhere for UI.
+      // The GameState interface has 'deck', but usually we assume deck is hidden.
+      // But for hole cards, we need to show them if phase is SURRENDER/PLAYING.
+      // In getGameState, we return initialHoleCards: game.deck?
+      // If we clear game.deck, we lose them.
+      // Let's store them in a new property `initialHoleCards` on GameState?
+      // GameState interface doesn't have it.
+      // But we can add it or just not clear deck and use a flag?
+      // Better: Add initialHoleCards to GameState.
+      // Or just use a separate property in GameService.
+      // Let's modify GameState to include initialHoleCards.
+      // For now, I'll store it in a map in GameService to avoid changing GameState too much if not needed.
+      // But getGameState needs it.
+      // Let's just modify GameState in gameTypes.ts first.
+      
+      game.phase = 'SURRENDER';
       game.passCount = 0;
       game.lastMove = null;
-      game.currentTurn = this.findHeart4Owner(game);
+      // In SURRENDER phase, currentTurn is usually irrelevant for action, but we can keep it as digger.
+      game.currentTurn = game.diggerId;
 
       socketService.broadcast(game.roomId, 'hole_taken', { diggerId: playerId });
       socketService.broadcast(game.roomId, 'game_update');
+      this.scheduleAiTurn(game.roomId);
+  }
+
+  surrender(roomId: string, playerId: string) {
+      const game = this.games.get(roomId)
+      if (!game) throw new Error('Game not found')
+      if (game.phase !== 'SURRENDER') throw new Error('Not in surrender phase')
+      
+      // Determine winner based on who surrendered
+      // If Digger surrendered -> Winner is Others (pick first non-digger as representative ID, or handled by side)
+      // If Peasant surrendered -> Winner is Digger
+      const isDigger = game.diggerId === playerId
+      const winnerSide = isDigger ? 'OTHERS' : 'DIGGER'
+      let winnerId = ''
+      
+      if (winnerSide === 'DIGGER') {
+          winnerId = game.diggerId!
+      } else {
+          // If Others win, we need a winnerId for the record. 
+          // Usually we pick one peasant.
+          const room = roomService.getRoom(roomId)
+          if (room) {
+              const peasant = room.players.find(p => p.id !== game.diggerId)
+              if (peasant) winnerId = peasant.id
+          }
+      }
+
+      // Calculate adjusted score for surrender (4->3, 3->2, 2->2, 1->1)
+      let adjustedScore = game.bidScore
+      if (game.bidScore === 4) adjustedScore = 3
+      else if (game.bidScore === 3) adjustedScore = 2
+      else if (game.bidScore === 2) adjustedScore = 2
+      else if (game.bidScore === 1) adjustedScore = 1
+
+      // Immediate game over with adjusted score
+      this.processGameOver(roomId, winnerId, winnerSide, adjustedScore)
+  }
+
+  confirmContinue(roomId: string, playerId: string) {
+      const game = this.games.get(roomId)
+      if (!game) throw new Error('Game not found')
+      if (game.phase !== 'SURRENDER') throw new Error('Not in surrender phase')
+
+      // Only Digger can proceed to playing phase
+      if (playerId === game.diggerId) {
+          game.phase = 'PLAYING'
+          game.currentTurn = this.findHeart4Owner(game)
+          socketService.broadcast(roomId, 'game_update')
+          this.scheduleAiTurn(roomId)
+      }
   }
 
   handlePlayCards(roomId: string, playerId: string, cardCodes: string[]) {
@@ -313,13 +393,55 @@ class GameService {
       // Check win
       if (game.playersHand[playerId].length === 0) {
           this.undoByRoom.delete(roomId);
-          game.phase = 'FINISHED';
-          const room = roomService.getRoom(game.roomId);
-          if (room) room.status = RoomStatus.FINISHED;
-          this.lastWinnerByRoom.set(roomId, playerId);
-          const winnerSide = game.diggerId === playerId ? 'DIGGER' : 'OTHERS';
+          
+          // Broadcast the winning move immediately so clients see it
+          const isMax = this.isCurrentMoveMax(game, playerId);
+          if (isMax) {
+             socketService.broadcast(game.roomId, 'max_play', {
+               playerId,
+               cards: cardsToPlay,
+               pattern,
+             });
+          }
+          socketService.broadcast(game.roomId, 'game_update');
+
+          // Delay the actual game over processing by 3 seconds
+          setTimeout(() => {
+              this.processGameOver(roomId, playerId, game.diggerId === playerId ? 'DIGGER' : 'OTHERS');
+          }, 3000);
+          return;
+      }
+
+      const isMax = this.isCurrentMoveMax(game, playerId);
+      if (isMax) {
+        game.currentTurn = playerId;
+        socketService.broadcast(game.roomId, 'max_play', {
+          playerId,
+          cards: cardsToPlay,
+          pattern,
+        });
+        
+        // AI Optimization: If AI plays max card, it should continue immediately (after small delay)
+        this.scheduleAiTurn(roomId);
+      } else {
+        this.nextTurn(game);
+        // Schedule next AI turn
+        this.scheduleAiTurn(roomId);
+      }
+      socketService.broadcast(game.roomId, 'game_update');
+  }
+
+  private processGameOver(roomId: string, winnerId: string, winnerSide: 'DIGGER' | 'OTHERS', customBidScore?: number) {
+      const game = this.games.get(roomId);
+      if (!game) return;
+
+      game.phase = 'FINISHED';
+      const room = roomService.getRoom(game.roomId);
+      if (room) room.status = RoomStatus.FINISHED;
+      this.lastWinnerByRoom.set(roomId, winnerId);
+      
       if (room) {
-        const base = typeof game.bidScore === 'number' ? game.bidScore : 0
+        const base = typeof customBidScore === 'number' ? customBidScore : (typeof game.bidScore === 'number' ? game.bidScore : 0)
         const othersCount = Math.max(0, room.players.length - 1)
         const round = (this.settlementHistoryByRoom.get(roomId)?.length || 0) + 1
         const baseResults = room.players.map(p => {
@@ -339,31 +461,30 @@ class GameService {
           round,
           bidScore: base,
           diggerId: game.diggerId,
-          winnerId: playerId,
+          winnerId: winnerId,
           winnerSide,
           baseResults,
           createdAt: Date.now(),
         })
         this.settlementMultiplierByRoom.set(roomId, null)
-      }
-          socketService.broadcast(game.roomId, 'game_over', { winnerId: playerId, winnerSide });
-          socketService.broadcast(game.roomId, 'room_update');
-          socketService.broadcastLobby('room_update');
-          return;
-      }
-
-      const isMax = this.isCurrentMoveMax(game, playerId);
-      if (isMax) {
-        game.currentTurn = playerId;
-        socketService.broadcast(game.roomId, 'max_play', {
-          playerId,
-          cards: cardsToPlay,
-          pattern,
+        
+        // Auto-handle bots in settlement
+        room.players.forEach(p => {
+            if (p.isBot) {
+                // Bots automatically ready up after a delay
+                setTimeout(() => {
+                    try {
+                        this.markNextRoundReady(roomId, p.id);
+                    } catch (e) {
+                        // Ignore if room closed
+                    }
+                }, 5000 + Math.random() * 2000); // 5-7s delay
+            }
         });
-      } else {
-        this.nextTurn(game);
       }
-      socketService.broadcast(game.roomId, 'game_update');
+      socketService.broadcast(game.roomId, 'game_over', { winnerId, winnerSide });
+      socketService.broadcast(game.roomId, 'room_update');
+      socketService.broadcastLobby('room_update');
   }
 
   handlePass(roomId: string, playerId: string) {
@@ -386,6 +507,7 @@ class GameService {
           game.passCount = 0;
       }
       socketService.broadcast(game.roomId, 'game_update');
+      this.scheduleAiTurn(game.roomId);
   }
 
   undoLastMove(roomId: string, playerId: string) {
@@ -511,6 +633,7 @@ class GameService {
       winnerSide,
       settlementMultiplier: this.settlementMultiplierByRoom.get(roomId) ?? null,
       settlementMultiplierPending: this.pendingSettlementByRoom.has(roomId) && (this.settlementMultiplierByRoom.get(roomId) ?? null) === null,
+      initialHoleCards: game.initialHoleCards || [], // Use the stored initialHoleCards
       holeCards: game.phase === 'TAKING_HOLE' ? game.deck : [],
       nextRoundReady: room?.status === RoomStatus.FINISHED ? Array.from(this.nextRoundReadyByRoom.get(roomId) || []) : [],
       settlementHistory: this.settlementHistoryByRoom.get(roomId) || [],
@@ -645,6 +768,115 @@ class GameService {
     this.lastWinnerByRoom.delete(roomId)
     this.settlementHistoryByRoom.delete(roomId)
   }
+
+  addBot(roomId: string) {
+    const room = roomService.getRoom(roomId)
+    if (!room) throw new Error('房间未找到')
+    if (room.status !== RoomStatus.WAITING) throw new Error('游戏已开始')
+    if (room.players.length >= room.maxPlayers) throw new Error('房间已满')
+
+    const botId = `bot_${Date.now()}_${Math.floor(Math.random() * 1000)}`
+    
+    // Realistic names list
+    const names = [
+        '张三', '李四', '王五', '赵六', '孙七', '周八', '吴九', '郑十',
+        '快乐小狗', '无敌战神', '扑克大师', '绝地求生', '风一样的男子',
+        '静静', '明明', '阿强', '小红', '小明', '大壮', '翠花'
+    ]
+    
+    // Filter out names already in room
+    const usedNames = new Set(room.players.map(p => p.name.replace(/\(AI\)$/, '')))
+    const availableNames = names.filter(n => !usedNames.has(n))
+    
+    let baseName = ''
+    if (availableNames.length > 0) {
+        baseName = availableNames[Math.floor(Math.random() * availableNames.length)]
+    } else {
+        // Fallback if all names used
+        baseName = `玩家${Math.floor(Math.random() * 1000)}`
+    }
+    
+    const botName = `${baseName}(AI)`
+    
+    const bot: Player = {
+        id: botId,
+        name: botName,
+        roomId,
+        isOnline: true,
+        joinedAt: Date.now(),
+        handCards: [],
+        score: 0,
+        isBot: true
+    }
+    
+    room.players.push(bot)
+    socketService.broadcast(roomId, 'room_update')
+    socketService.broadcastLobby('room_update')
+    return bot
+  }
+
+  private scheduleAiTurn(roomId: string) {
+      // Reduce delay before starting AI, because AI computation now takes time (2s)
+      setTimeout(async () => {
+          try {
+              await this.checkAiTurn(roomId)
+          } catch (e) {
+              console.error(`AI turn error in room ${roomId}:`, e)
+              // If AI crashes, try to recover by forcing a pass or random move?
+              // For now just log.
+          }
+      }, 500)
+  }
+
+  private async checkAiTurn(roomId: string) {
+      const game = this.games.get(roomId)
+      if (!game) return
+      const room = roomService.getRoom(roomId)
+      if (!room || room.status !== RoomStatus.PLAYING) return
+      if (game.phase === 'FINISHED') return
+
+      const currentPlayerId = game.currentTurn
+      const currentPlayer = room.players.find(p => p.id === currentPlayerId)
+      if (!currentPlayer || !currentPlayer.isBot) return
+
+      // It is bot's turn
+      if (game.phase === 'BIDDING') {
+          const score = computeAiBid(game, currentPlayerId)
+          // Add small random delay for bidding
+          await new Promise(r => setTimeout(r, 1000))
+          this.handleBid(roomId, currentPlayerId, score)
+      } else if (game.phase === 'TAKING_HOLE') {
+          if (game.diggerId === currentPlayerId) {
+              await new Promise(r => setTimeout(r, 1000))
+              this.takeHoleCards(roomId, currentPlayerId)
+          }
+      } else if (game.phase === 'SURRENDER') {
+          // AI always continues
+          await new Promise(r => setTimeout(r, 1000))
+          this.confirmContinue(roomId, currentPlayerId)
+      } else if (game.phase === 'PLAYING') {
+          const playerIds = room.players.map(p => p.id)
+          // This is now async and takes ~2000ms
+          let cards = await computeAiPlayMove(game, currentPlayerId, playerIds)
+          
+          // Safety check: If it's a free turn (lead) and AI returned empty (pass),
+          // force play the smallest single card to avoid getting stuck.
+          const isFreeTurn = !game.lastMove || game.lastMove.playerId === currentPlayerId
+          if (cards.length === 0 && isFreeTurn) {
+              const hand = game.playersHand[currentPlayerId] || []
+              if (hand.length > 0) {
+                  cards = [hand[hand.length - 1]] // Smallest card (sorted desc)
+              }
+          }
+
+          if (cards.length === 0) {
+              this.handlePass(roomId, currentPlayerId)
+          } else {
+              this.handlePlayCards(roomId, currentPlayerId, cards.map(c => c.code))
+          }
+      }
+  }
+
 
   private isCurrentMoveMax(game: GameState, playerId: string) {
     const lastMove = game.lastMove
