@@ -1,6 +1,6 @@
 workflows:
-  ios-forced-creation:
-    name: "💀 iOS Force Create (Manual Override)"
+  ios-smart-fix:
+    name: "🛠️ Final Smart Fix (Auto-Nuke)"
     max_build_duration: 120
     instance_type: mac_mini_m1
     environment:
@@ -15,6 +15,63 @@ workflows:
       branch_patterns:
         - pattern: main
     scripts:
+      - name: "💣 SMART CLEANUP (Nuke All Distribution Types)"
+        script: |
+          echo "🔍 正在扫描所有类型的证书..."
+          
+          # 1. 不加任何过滤器，下载所有证书信息到文件
+          app-store-connect certificates list > all_certs.txt 2>&1
+          
+          # 2. 使用 Python 智能分析并删除
+          # 逻辑：只要类型或名称里包含 'DISTRIBUTION'，统统删掉
+          python3 -c "
+          import sys, re, subprocess
+
+          def run_cmd(cmd):
+              subprocess.run(cmd, shell=True)
+
+          print('-------- 分析证书列表 --------')
+          try:
+              with open('all_certs.txt', 'r') as f:
+                  lines = f.readlines()
+                  
+              # 跳过表头，从第3行开始读取 (根据日志格式调整)
+              # 典型格式: ID  Name  Type  Serial ...
+              found_ghost = False
+              for line in lines:
+                  if 'DISTRIBUTION' in line.upper():
+                      parts = line.split()
+                      if len(parts) > 0:
+                          cert_id = parts[0]
+                          print(f'🚫 发现发布证书 (ID: {cert_id}) -> 正在销毁...')
+                          run_cmd(f'app-store-connect certificates revoke --id {cert_id}')
+                          found_ghost = True
+              
+              if not found_ghost:
+                  print('✅ 未发现任何发布证书 (环境干净)')
+
+          except Exception as e:
+              print(f'脚本执行出错: {e}')
+          print('-----------------------------')
+          "
+
+          # 3. 清理旧的描述文件 (Profiles)
+          # 同样不加过滤器，拉取所有 Profiles
+          echo "🔍 正在清理描述文件..."
+          app-store-connect profiles list > all_profiles.txt 2>&1
+          python3 -c "
+          import subprocess
+          with open('all_profiles.txt', 'r') as f:
+              for line in f:
+                  # 只要包含 App ID 的描述文件都删掉
+                  if 'com.poker4.client' in line:
+                      parts = line.split()
+                      if len(parts) > 0:
+                          pid = parts[0]
+                          print(f'🗑️ 删除旧Profile: {pid}')
+                          subprocess.run(f'app-store-connect profiles delete --id {pid}', shell=True)
+          "
+
       - name: "Install & Build Web"
         script: |
           cd client/app
@@ -25,47 +82,23 @@ workflows:
       - name: "Initialize Keychain"
         script: keychain initialize
 
-      - name: "🔥 FORCE CREATE CERTIFICATE (The Fix)"
-        script: |
-          echo "🚀 正在强制创建新证书..."
-          
-          # 1. 定义临时存储路径
-          CERT_KEY_PATH="dist.p12"
-          PROFILE_PATH="dist.mobileprovision"
-          
-          # 2. 这里的关键是：我们不让它去 fetch，而是直接 create
-          # 使用 app-store-connect 工具的一个特定功能来请求新证书
-          # 注意：这里我们指明要创建 IOS_DISTRIBUTION
-          
-          # 这一步会强制请求一个新的 CSR 并提交给 Apple
-          app-store-connect certificates create --type IOS_DISTRIBUTION --save-to-file "$CERT_KEY_PATH"
-          
-          # 3. 把这个刚出炉的新证书导入钥匙串
-          # (因为是刚创建的，私钥肯定在本地，所以不会报错！)
-          keychain add-certificates --certificate "$CERT_KEY_PATH"
-          
-          echo "✅ 新证书创建并导入成功！"
-
-      - name: "🔥 FORCE CREATE PROFILE"
+      - name: "Auto Code Signing (Rebirth)"
         script: |
           PROJECT_PATH="client/app/ios/App/App.xcodeproj"
           APP_ID=$(xcode-project detect-bundle-id --project "$PROJECT_PATH")
           echo "App ID: $APP_ID"
           
-          # 强制为这个 App ID 创建一个新的描述文件
-          app-store-connect profiles create --bundle-id "$APP_ID" --type IOS_APP_STORE --certificate-id $(app-store-connect certificates list --type IOS_DISTRIBUTION --limit 1 | awk 'NR==2 {print $1}') --save-to-file "dist.mobileprovision"
+          # 🔥 重点：
+          # 现在环境绝对干净了（所有Distribution都被删了）
+          # --create 参数会发现没有证书，从而强制创建一个全新的
+          # 并且因为是新建的，私钥会自动保存，不会再报 'Cannot save' 错误
+          app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
           
-          # 这一步是为了让 xcode-project use-profiles 能找到它
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp dist.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
-          
-          echo "✅ 新描述文件创建成功！"
+          keychain add-certificates
 
       - name: "Build IPA"
         script: |
-          # 应用刚才强制生成的配置
           xcode-project use-profiles --project "client/app/ios/App/App.xcodeproj"
-          
           xcode-project build-ipa \
             --workspace "client/app/ios/App/App.xcworkspace" \
             --scheme "App"
