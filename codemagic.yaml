@@ -1,11 +1,12 @@
 workflows:
-  ios-manual-fix:
-    name: "🏆 Manual Signing (Fixed)"
+  ios-publish-testflight:
+    name: "🚀 Build & Upload to TestFlight"
     max_build_duration: 120
     instance_type: mac_mini_m1
     environment:
       groups:
-        - manual_signing  # 你的组名
+        - manual_signing      # 你的手动证书变量 (P12 + Profile)
+        - app_store_upload    # 你的上传专用 API Key
       node: 20
       xcode: latest
       cocoapods: default
@@ -22,42 +23,55 @@ workflows:
           npm run build
           npx cap sync ios
 
+      - name: "🔢 Increment Build Number"
+        script: |
+          # 这一步非常重要！
+          # 使用 agvtool 自动把 Codemagic 的构建次数 ($BUILD_NUMBER) 设为内部版本号
+          # 这样你每次点构建，版本号都不一样，Apple 才会接收
+          cd client/app/ios/App
+          agvtool new-version -all $BUILD_NUMBER
+
       - name: "Initialize Keychain"
         script: keychain initialize
 
       - name: "✍️ MANUAL SETUP: Import Certificate"
         script: |
-          echo "正在导入手动上传的证书..."
-          # 1. 解码 P12
           echo $CM_CERTIFICATE | base64 --decode > /tmp/certificate.p12
-          
-          # 2. 导入钥匙串
           keychain add-certificates --certificate /tmp/certificate.p12 --certificate-password "$CM_CERTIFICATE_PASSWORD"
 
       - name: "📝 MANUAL SETUP: Import Profile"
         script: |
-          echo "正在导入手动上传的描述文件..."
-          # 1. 解码描述文件
           echo $CM_PROVISIONING_PROFILE | base64 --decode > /tmp/profile.mobileprovision
-          
-          # 2. 放到系统目录
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp /tmp/profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
 
       - name: "⚙️ APPLY SIGNING SETTINGS"
         script: |
-          # 🔥 修正点：在这里告诉 Xcode 使用我们刚才放入的描述文件
-          # 它会自动扫描 ~/Library/MobileDevice/Provisioning Profiles 下的文件
-          # 并修改 Xcode 工程设置为 "Manual" 签名
           xcode-project use-profiles --project "client/app/ios/App/App.xcodeproj"
 
       - name: "Build IPA"
         script: |
-          # 🔥 修正点：去掉了不支持的参数
-          # 因为上一步 use-profiles 已经配置好了签名信息，这里直接构建即可
           xcode-project build-ipa \
             --workspace "client/app/ios/App/App.xcworkspace" \
             --scheme "App"
 
     artifacts:
       - build/ios/ipa/*.ipa
+
+    # 👇👇👇 新增的发布板块 👇👇👇
+    publishing:
+      email:
+        recipients:
+          - 你的邮箱@example.com  # 构建成功发个邮件通知你
+      app_store_connect:
+        # 使用刚才配置的 API Key
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        
+        # 自动传到 TestFlight
+        submit_to_testflight: true
+        
+        # 如果是第一次传，可能需要设为 false，防止自动提交审核
+        # 但通常设为 true 没问题，只会进内部测试
+        submit_to_app_store: false
