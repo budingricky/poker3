@@ -1,6 +1,6 @@
 workflows:
-  ios-final-cleanup:
-    name: "💀 Final Nuclear Clean-up"
+  ios-forced-creation:
+    name: "💀 iOS Force Create (Manual Override)"
     max_build_duration: 120
     instance_type: mac_mini_m1
     environment:
@@ -15,32 +15,6 @@ workflows:
       branch_patterns:
         - pattern: main
     scripts:
-      - name: "💣 NUKE DISTRIBUTION CERTS (Fixed)"
-        script: |
-          echo "🔍 正在搜索所有发布证书..."
-          
-          # 1. 直接打印列表到日志 (方便你查看) 并保存到文件
-          # 这是一个文本表格，我们稍后用 awk 提取第一列的 ID
-          app-store-connect certificates list --type IOS_DISTRIBUTION > certs.txt || true
-          cat certs.txt
-          
-          # 2. 提取 ID 并逐个删除
-          # 逻辑：跳过第一行标题，提取第一列 ID
-          echo "⚠️ 准备执行删除操作..."
-          ids=$(awk 'NR>1 {print $1}' certs.txt)
-          
-          if [ -z "$ids" ]; then
-              echo "✅ 未发现发布证书，环境是干净的。"
-          else
-              for id in $ids; do
-                  echo "🚫 发现幽灵证书 ID: $id - 正在销毁..."
-                  # 忽略错误继续删下一个
-                  app-store-connect certificates revoke --id $id || true
-              done
-          fi
-          
-          echo "✅ 证书清理完毕！"
-
       - name: "Install & Build Web"
         script: |
           cd client/app
@@ -51,20 +25,47 @@ workflows:
       - name: "Initialize Keychain"
         script: keychain initialize
 
-      - name: "Auto Code Signing (Fresh Start)"
+      - name: "🔥 FORCE CREATE CERTIFICATE (The Fix)"
+        script: |
+          echo "🚀 正在强制创建新证书..."
+          
+          # 1. 定义临时存储路径
+          CERT_KEY_PATH="dist.p12"
+          PROFILE_PATH="dist.mobileprovision"
+          
+          # 2. 这里的关键是：我们不让它去 fetch，而是直接 create
+          # 使用 app-store-connect 工具的一个特定功能来请求新证书
+          # 注意：这里我们指明要创建 IOS_DISTRIBUTION
+          
+          # 这一步会强制请求一个新的 CSR 并提交给 Apple
+          app-store-connect certificates create --type IOS_DISTRIBUTION --save-to-file "$CERT_KEY_PATH"
+          
+          # 3. 把这个刚出炉的新证书导入钥匙串
+          # (因为是刚创建的，私钥肯定在本地，所以不会报错！)
+          keychain add-certificates --certificate "$CERT_KEY_PATH"
+          
+          echo "✅ 新证书创建并导入成功！"
+
+      - name: "🔥 FORCE CREATE PROFILE"
         script: |
           PROJECT_PATH="client/app/ios/App/App.xcodeproj"
           APP_ID=$(xcode-project detect-bundle-id --project "$PROJECT_PATH")
           echo "App ID: $APP_ID"
           
-          # 此时环境已被脚本清空，--create 参数将强制生成新证书
-          app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
+          # 强制为这个 App ID 创建一个新的描述文件
+          app-store-connect profiles create --bundle-id "$APP_ID" --type IOS_APP_STORE --certificate-id $(app-store-connect certificates list --type IOS_DISTRIBUTION --limit 1 | awk 'NR==2 {print $1}') --save-to-file "dist.mobileprovision"
           
-          keychain add-certificates
+          # 这一步是为了让 xcode-project use-profiles 能找到它
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp dist.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
+          
+          echo "✅ 新描述文件创建成功！"
 
       - name: "Build IPA"
         script: |
+          # 应用刚才强制生成的配置
           xcode-project use-profiles --project "client/app/ios/App/App.xcodeproj"
+          
           xcode-project build-ipa \
             --workspace "client/app/ios/App/App.xcworkspace" \
             --scheme "App"
