@@ -51,7 +51,7 @@ export const analyzeHand = (cards: Card[]): HandPattern | null => {
 };
 
 const isStraight = (ranks: number[]): boolean => {
-    if (ranks[0] < 3) return false;
+    if (ranks[0] < 4) return false;
     if (ranks[ranks.length - 1] > 13) return false;
 
     for (let i = 0; i < ranks.length - 1; i++) {
@@ -61,7 +61,7 @@ const isStraight = (ranks: number[]): boolean => {
 };
 
 const isConsecutivePairs = (ranks: number[]): boolean => {
-    if (ranks[0] < 3) return false;
+    if (ranks[0] < 4) return false;
     if (ranks[ranks.length - 1] > 13) return false;
 
     for (let i = 0; i < ranks.length; i += 2) {
@@ -72,7 +72,7 @@ const isConsecutivePairs = (ranks: number[]): boolean => {
 };
 
 const isConsecutiveTriplets = (ranks: number[]): boolean => {
-    if (ranks[0] < 3) return false;
+    if (ranks[0] < 4) return false;
     if (ranks[ranks.length - 1] > 13) return false;
     for (let i = 0; i < ranks.length; i += 3) {
         if (!(ranks[i] === ranks[i + 1] && ranks[i + 1] === ranks[i + 2])) return false;

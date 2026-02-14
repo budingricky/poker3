@@ -23,6 +23,8 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [noBeatKey, setNoBeatKey] = useState<string | null>(null);
   const [showAllPlayed, setShowAllPlayed] = useState(false)
+  const [cardOverlap, setCardOverlap] = useState(0)
+  const handContainerRef = useRef<HTMLDivElement>(null)
   const navigate = useNavigate();
   const playAreaRef = useRef<HTMLDivElement>(null);
   const myName = localStorage.getItem('playerName') || '我';
@@ -219,6 +221,37 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
+
+  useEffect(() => {
+    if (!handContainerRef.current || !gameState?.myHand) return
+    const count = gameState.myHand.length
+    if (count <= 1) {
+        setCardOverlap(0)
+        return
+    }
+    const containerWidth = handContainerRef.current.clientWidth || window.innerWidth
+    // cardSizeClass: w-[clamp(...)]
+    // Estimate card width:
+    // Narrow: 3.1rem ~ 50px to 4.2rem ~ 67px.
+    // Desktop: w-20 ~ 80px.
+    const cardBaseWidth = isNarrow ? (Math.min(window.innerWidth * 0.1, 67)) : 80
+    // Actually we can read element width if rendered, but estimation is faster.
+    // Let's be conservative.
+    
+    const available = containerWidth - 40 // Padding
+    const totalRaw = count * cardBaseWidth
+    
+    if (totalRaw <= available) {
+        setCardOverlap(10) // Positive gap
+    } else {
+        // Calculate needed negative margin
+        // totalWidth = cardBaseWidth + (count - 1) * (cardBaseWidth + margin)
+        // available = cardBaseWidth + (count - 1) * cardBaseWidth + (count - 1) * margin
+        // available - count * cardBaseWidth = (count - 1) * margin
+        const margin = (available - count * cardBaseWidth) / (count - 1)
+        setCardOverlap(margin)
+    }
+  }, [viewportWidth, gameState?.myHand?.length, isNarrow])
 
   useEffect(() => {
     if (!gameState) return
@@ -478,24 +511,42 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
       </div>
 
       {/* Opponents Area */}
-      <div className="flex justify-around py-4 z-10">
-        {gameState.otherPlayers.map((p: any) => (
-          <div key={p.id} className={`
-              relative p-3 rounded-xl min-w-[80px] text-center transition-all duration-300
-              ${gameState.currentTurn === p.id 
-                  ? 'bg-yellow-500/20 border-2 border-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.3)]' 
-                  : 'bg-black/20 border border-white/10'}
-          `}>
-             <div className="font-bold text-white text-sm">
-                 {p.id === gameState.diggerId && '👑 '}
-                 {p.name}
-             </div>
-             <div className="flex justify-center items-center gap-1 mt-1">
-                <div className="bg-blue-600 w-5 h-7 rounded-sm border border-white/20"></div>
-                <span className="text-xl font-mono text-white">{p.cardCount}</span>
-             </div>
-          </div>
-        ))}
+      <div className="absolute inset-0 pointer-events-none z-10">
+        {gameState.otherPlayers.map((p: any, i: number) => {
+           const total = gameState.otherPlayers.length;
+           let posClass = '';
+           // Default for 4 players (3 opponents)
+           if (total === 3) {
+               if (i === 0) posClass = 'right-2 top-1/2 -translate-y-1/2 flex-col'; // Right
+               if (i === 1) posClass = 'top-16 left-1/2 -translate-x-1/2 flex-row'; // Top
+               if (i === 2) posClass = 'left-2 top-1/2 -translate-y-1/2 flex-col'; // Left
+           } else if (total === 2) {
+               if (i === 0) posClass = 'right-2 top-1/2 -translate-y-1/2 flex-col';
+               if (i === 1) posClass = 'left-2 top-1/2 -translate-y-1/2 flex-col';
+           } else if (total === 1) {
+               posClass = 'top-16 left-1/2 -translate-x-1/2 flex-row';
+           }
+           
+           return (
+              <div key={p.id} className={`absolute ${posClass} pointer-events-auto flex items-center justify-center gap-2`}>
+                  <div className={`
+                      relative p-2 rounded-xl text-center transition-all duration-300 backdrop-blur-md
+                      ${gameState.currentTurn === p.id 
+                          ? 'bg-yellow-500/20 border-2 border-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.3)]' 
+                          : 'bg-black/40 border border-white/10'}
+                  `}>
+                     <div className="font-bold text-white text-xs md:text-sm whitespace-nowrap">
+                         {p.id === gameState.diggerId && '👑 '}
+                         {p.name}
+                     </div>
+                     <div className="flex justify-center items-center gap-1 mt-1">
+                        <div className="bg-blue-600 w-4 h-5 md:w-5 md:h-7 rounded-sm border border-white/20"></div>
+                        <span className="text-lg md:text-xl font-mono text-white">{p.cardCount}</span>
+                     </div>
+                  </div>
+              </div>
+           );
+        })}
       </div>
 
       {/* Center Table / Last Move / Hole Cards */}
@@ -644,9 +695,9 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
         )}
 
         {/* Hand Cards */}
-        <div className={`w-full ${useTwoRows ? '' : 'overflow-x-auto'} pb-2 pt-2 px-4 min-h-[110px]`}>
+        <div ref={handContainerRef} className={`w-full overflow-hidden pb-2 pt-2 px-4 min-h-[110px]`}>
           <AnimatePresence>
-            <div className={`${useTwoRows ? 'flex flex-wrap justify-center gap-2' : 'flex gap-2 min-w-max px-2 justify-center'}`}>
+            <div className="flex justify-center items-end h-full" style={{ width: '100%' }}>
               {gameState.myHand
                 .filter((c: any) => !selectedCards.includes(c.code))
                 .map((card: any, idx: number) => {
@@ -660,13 +711,17 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
                       dragSnapToOrigin={true}
                       onDragEnd={(e, info) => handleDragEnd(e, info, card.code)}
                       onClick={() => toggleCard(card.code)}
+                      style={{ 
+                          marginLeft: idx === 0 ? 0 : `${cardOverlap}px`,
+                          zIndex: idx
+                      }}
                       animate={{
                         y: 0,
-                        zIndex: 1000 + idx,
+                        zIndex: idx,
                       }}
-                      whileHover={{ y: -10, zIndex: 3000 }}
-                      whileDrag={{ scale: 1.06, zIndex: 3000, cursor: 'grabbing' }}
-                      className="cursor-grab active:cursor-grabbing"
+                      whileHover={{ y: -20, zIndex: 100 }}
+                      whileDrag={{ scale: 1.06, zIndex: 100, cursor: 'grabbing' }}
+                      className="cursor-grab active:cursor-grabbing flex-shrink-0"
                     >
                       <Card code={card.code} selected={false} className={`shadow-2xl ${cardSizeClass}`} />
                     </motion.div>

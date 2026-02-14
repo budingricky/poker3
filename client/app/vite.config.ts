@@ -22,6 +22,12 @@ export default defineConfig(({ command }) => {
       port: 5173,
       strictPort: true,
       https,
+      watch: {
+        ignored: ['**/ios/**', '**/android/**'],
+      },
+    },
+    optimizeDeps: {
+      entries: ['index.html'],
     },
     preview: {
       host: true,
