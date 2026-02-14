@@ -1,11 +1,11 @@
 workflows:
-  ios-manual-build:
-    name: "🏆 Manual Signing Build (The Winner)"
+  ios-manual-fix:
+    name: "🏆 Manual Signing (Fixed)"
     max_build_duration: 120
     instance_type: mac_mini_m1
     environment:
       groups:
-        - manual_signing  # 👈 对应你在网页上建的组名
+        - manual_signing  # 你的组名
       node: 20
       xcode: latest
       cocoapods: default
@@ -28,31 +28,36 @@ workflows:
       - name: "✍️ MANUAL SETUP: Import Certificate"
         script: |
           echo "正在导入手动上传的证书..."
-          # 解码 Base64 变量还原成文件
+          # 1. 解码 P12
           echo $CM_CERTIFICATE | base64 --decode > /tmp/certificate.p12
           
-          # 导入钥匙串
+          # 2. 导入钥匙串
           keychain add-certificates --certificate /tmp/certificate.p12 --certificate-password "$CM_CERTIFICATE_PASSWORD"
 
       - name: "📝 MANUAL SETUP: Import Profile"
         script: |
           echo "正在导入手动上传的描述文件..."
-          # 解码 Base64
+          # 1. 解码描述文件
           echo $CM_PROVISIONING_PROFILE | base64 --decode > /tmp/profile.mobileprovision
           
-          # 放到 Xcode 能找到的地方
+          # 2. 放到系统目录
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp /tmp/profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
 
+      - name: "⚙️ APPLY SIGNING SETTINGS"
+        script: |
+          # 🔥 修正点：在这里告诉 Xcode 使用我们刚才放入的描述文件
+          # 它会自动扫描 ~/Library/MobileDevice/Provisioning Profiles 下的文件
+          # 并修改 Xcode 工程设置为 "Manual" 签名
+          xcode-project use-profiles --project "client/app/ios/App/App.xcodeproj"
+
       - name: "Build IPA"
         script: |
-          # 这里的关键是使用 manual 模式
+          # 🔥 修正点：去掉了不支持的参数
+          # 因为上一步 use-profiles 已经配置好了签名信息，这里直接构建即可
           xcode-project build-ipa \
             --workspace "client/app/ios/App/App.xcworkspace" \
-            --scheme "App" \
-            --code-signing-identity "Apple Distribution" 
-            # 注意：如果构建失败提示找不到 Profile，可能需要在 Xcode 工程里手动指定
-            # 但通常 xcode-project build-ipa 会自动匹配刚才放进去的 Profile
+            --scheme "App"
 
     artifacts:
       - client/app/ios/App/build/*.ipa
