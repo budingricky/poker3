@@ -1,6 +1,6 @@
 workflows:
-  ios-terminator-build:
-    name: "💀 Terminator Build (Force Clean)"
+  ios-final-cleanup:
+    name: "💀 Final Nuclear Clean-up"
     max_build_duration: 120
     instance_type: mac_mini_m1
     environment:
@@ -15,48 +15,31 @@ workflows:
       branch_patterns:
         - pattern: main
     scripts:
-      - name: "🧹 PRE-FLIGHT: Nuke Everything (Force Clean)"
+      - name: "💣 NUKE DISTRIBUTION CERTS (Fixed)"
         script: |
-          echo "⚠️ Starting nuclear clean-up..."
+          echo "🔍 正在搜索所有发布证书..."
           
-          # 1. 下载当前所有的发布证书列表
-          app-store-connect certificates list --type IOS_DISTRIBUTION --save-to-file certs.json
+          # 1. 直接打印列表到日志 (方便你查看) 并保存到文件
+          # 这是一个文本表格，我们稍后用 awk 提取第一列的 ID
+          app-store-connect certificates list --type IOS_DISTRIBUTION > certs.txt || true
+          cat certs.txt
           
-          # 2. 使用 Python 解析列表并逐个撤销
-          python3 -c "
-          import json, os
-          try:
-              with open('certs.json') as f:
-                  data = json.load(f)
-                  certs = data.get('data', [])
-                  if not certs:
-                      print('✅ No ghost certificates found.')
-                  for cert in certs:
-                      cert_id = cert['id']
-                      print(f'🚫 Revoking ghost certificate: {cert_id}...')
-                      os.system(f'app-store-connect certificates revoke --id {cert_id}')
-          except Exception as e:
-              print(f'Error processing certs: {e}')
-          "
-
-          # 3. 下载所有的描述文件
-          app-store-connect profiles list --type IOS_APP_STORE --save-to-file profiles.json
+          # 2. 提取 ID 并逐个删除
+          # 逻辑：跳过第一行标题，提取第一列 ID
+          echo "⚠️ 准备执行删除操作..."
+          ids=$(awk 'NR>1 {print $1}' certs.txt)
           
-          # 4. 删除所有相关的描述文件
-          python3 -c "
-          import json, os
-          try:
-              with open('profiles.json') as f:
-                  data = json.load(f)
-                  profiles = data.get('data', [])
-                  for p in profiles:
-                      p_id = p['id']
-                      print(f'🗑️ Deleting profile: {p_id}...')
-                      os.system(f'app-store-connect profiles delete --id {p_id}')
-          except:
-              pass
-          "
-          echo "✅ Clean up complete. Ready to rebuild."
+          if [ -z "$ids" ]; then
+              echo "✅ 未发现发布证书，环境是干净的。"
+          else
+              for id in $ids; do
+                  echo "🚫 发现幽灵证书 ID: $id - 正在销毁..."
+                  # 忽略错误继续删下一个
+                  app-store-connect certificates revoke --id $id || true
+              done
+          fi
+          
+          echo "✅ 证书清理完毕！"
 
       - name: "Install & Build Web"
         script: |
@@ -68,12 +51,13 @@ workflows:
       - name: "Initialize Keychain"
         script: keychain initialize
 
-      - name: "Auto Code Signing (Force New)"
+      - name: "Auto Code Signing (Fresh Start)"
         script: |
           PROJECT_PATH="client/app/ios/App/App.xcodeproj"
           APP_ID=$(xcode-project detect-bundle-id --project "$PROJECT_PATH")
+          echo "App ID: $APP_ID"
           
-          # 强制创建新证书
+          # 此时环境已被脚本清空，--create 参数将强制生成新证书
           app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
           
           keychain add-certificates
