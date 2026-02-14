@@ -60,4 +60,4 @@ workflows:
             --scheme "App"
 
     artifacts:
-      - client/app/ios/App/build/*.ipa
+      - build/ios/ipa/*.ipa
