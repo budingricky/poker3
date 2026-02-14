@@ -1,11 +1,11 @@
 workflows:
-  ios-smart-fix:
-    name: "🛠️ Final Smart Fix (Auto-Nuke)"
+  ios-manual-build:
+    name: "🏆 Manual Signing Build (The Winner)"
     max_build_duration: 120
     instance_type: mac_mini_m1
     environment:
       groups:
-        - apple_credentials
+        - manual_signing  # 👈 对应你在网页上建的组名
       node: 20
       xcode: latest
       cocoapods: default
@@ -15,63 +15,6 @@ workflows:
       branch_patterns:
         - pattern: main
     scripts:
-      - name: "💣 SMART CLEANUP (Nuke All Distribution Types)"
-        script: |
-          echo "🔍 正在扫描所有类型的证书..."
-          
-          # 1. 不加任何过滤器，下载所有证书信息到文件
-          app-store-connect certificates list > all_certs.txt 2>&1
-          
-          # 2. 使用 Python 智能分析并删除
-          # 逻辑：只要类型或名称里包含 'DISTRIBUTION'，统统删掉
-          python3 -c "
-          import sys, re, subprocess
-
-          def run_cmd(cmd):
-              subprocess.run(cmd, shell=True)
-
-          print('-------- 分析证书列表 --------')
-          try:
-              with open('all_certs.txt', 'r') as f:
-                  lines = f.readlines()
-                  
-              # 跳过表头，从第3行开始读取 (根据日志格式调整)
-              # 典型格式: ID  Name  Type  Serial ...
-              found_ghost = False
-              for line in lines:
-                  if 'DISTRIBUTION' in line.upper():
-                      parts = line.split()
-                      if len(parts) > 0:
-                          cert_id = parts[0]
-                          print(f'🚫 发现发布证书 (ID: {cert_id}) -> 正在销毁...')
-                          run_cmd(f'app-store-connect certificates revoke --id {cert_id}')
-                          found_ghost = True
-              
-              if not found_ghost:
-                  print('✅ 未发现任何发布证书 (环境干净)')
-
-          except Exception as e:
-              print(f'脚本执行出错: {e}')
-          print('-----------------------------')
-          "
-
-          # 3. 清理旧的描述文件 (Profiles)
-          # 同样不加过滤器，拉取所有 Profiles
-          echo "🔍 正在清理描述文件..."
-          app-store-connect profiles list > all_profiles.txt 2>&1
-          python3 -c "
-          import subprocess
-          with open('all_profiles.txt', 'r') as f:
-              for line in f:
-                  # 只要包含 App ID 的描述文件都删掉
-                  if 'com.poker4.client' in line:
-                      parts = line.split()
-                      if len(parts) > 0:
-                          pid = parts[0]
-                          print(f'🗑️ 删除旧Profile: {pid}')
-                          subprocess.run(f'app-store-connect profiles delete --id {pid}', shell=True)
-          "
-
       - name: "Install & Build Web"
         script: |
           cd client/app
@@ -82,26 +25,34 @@ workflows:
       - name: "Initialize Keychain"
         script: keychain initialize
 
-      - name: "Auto Code Signing (Rebirth)"
+      - name: "✍️ MANUAL SETUP: Import Certificate"
         script: |
-          PROJECT_PATH="client/app/ios/App/App.xcodeproj"
-          APP_ID=$(xcode-project detect-bundle-id --project "$PROJECT_PATH")
-          echo "App ID: $APP_ID"
+          echo "正在导入手动上传的证书..."
+          # 解码 Base64 变量还原成文件
+          echo $CM_CERTIFICATE | base64 --decode > /tmp/certificate.p12
           
-          # 🔥 重点：
-          # 现在环境绝对干净了（所有Distribution都被删了）
-          # --create 参数会发现没有证书，从而强制创建一个全新的
-          # 并且因为是新建的，私钥会自动保存，不会再报 'Cannot save' 错误
-          app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
+          # 导入钥匙串
+          keychain add-certificates --certificate /tmp/certificate.p12 --certificate-password "$CM_CERTIFICATE_PASSWORD"
+
+      - name: "📝 MANUAL SETUP: Import Profile"
+        script: |
+          echo "正在导入手动上传的描述文件..."
+          # 解码 Base64
+          echo $CM_PROVISIONING_PROFILE | base64 --decode > /tmp/profile.mobileprovision
           
-          keychain add-certificates
+          # 放到 Xcode 能找到的地方
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp /tmp/profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
 
       - name: "Build IPA"
         script: |
-          xcode-project use-profiles --project "client/app/ios/App/App.xcodeproj"
+          # 这里的关键是使用 manual 模式
           xcode-project build-ipa \
             --workspace "client/app/ios/App/App.xcworkspace" \
-            --scheme "App"
+            --scheme "App" \
+            --code-signing-identity "Apple Distribution" 
+            # 注意：如果构建失败提示找不到 Profile，可能需要在 Xcode 工程里手动指定
+            # 但通常 xcode-project build-ipa 会自动匹配刚才放进去的 Profile
 
     artifacts:
       - client/app/ios/App/build/*.ipa
