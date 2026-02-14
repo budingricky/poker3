@@ -119,7 +119,7 @@ export const sortCards = (cards: Card[]): Card[] => {
 
 const isStraight = (ranks: number[]): boolean => {
   if (ranks.length < 3) return false
-  if (ranks[0] < 3) return false
+  if (ranks[0] < 4) return false
   if (ranks[ranks.length - 1] > 13) return false
   for (let i = 0; i < ranks.length - 1; i += 1) {
     if (ranks[i + 1] !== ranks[i] + 1) return false
@@ -129,7 +129,7 @@ const isStraight = (ranks: number[]): boolean => {
 
 const isConsecutivePairs = (ranks: number[]): boolean => {
   if (ranks.length < 6 || ranks.length % 2 !== 0) return false
-  if (ranks[0] < 3) return false
+  if (ranks[0] < 4) return false
   if (ranks[ranks.length - 1] > 13) return false
   for (let i = 0; i < ranks.length; i += 2) {
     if (ranks[i] !== ranks[i + 1]) return false
@@ -140,7 +140,7 @@ const isConsecutivePairs = (ranks: number[]): boolean => {
 
 const isConsecutiveTriplets = (ranks: number[]): boolean => {
   if (ranks.length < 6 || ranks.length % 3 !== 0) return false
-  if (ranks[0] < 3) return false
+  if (ranks[0] < 4) return false
   if (ranks[ranks.length - 1] > 13) return false
   for (let i = 0; i < ranks.length; i += 3) {
     if (!(ranks[i] === ranks[i + 1] && ranks[i + 1] === ranks[i + 2])) return false
@@ -778,12 +778,20 @@ export class OfflineEngine {
   private isCurrentMoveMax(playerId: string) {
     const lastMove = this.lastMove
     if (!lastMove || lastMove.playerId !== playerId) return false
-    for (const p of this.players) {
-      if (p.id === playerId) continue
-      const hand = this.playersHand[p.id] || []
-      if (this.canAnyBeat(hand, lastMove)) return false
-    }
-    return true
+    
+    const p = lastMove.pattern
+    // 3 is rank 3 but has compare value 13 (max for single/pair/triplet/quad)
+    if (p.type === 'SINGLE') return p.rank === 3
+    if (p.type === 'PAIR') return p.rank === 3
+    if (p.type === 'TRIPLET') return p.rank === 3
+    if (p.type === 'QUAD') return p.rank === 3
+    
+    // Straights max out at K (rank 13)
+    if (p.type === 'STRAIGHT') return p.rank === 13
+    if (p.type === 'CONSECUTIVE_PAIRS') return p.rank === 13
+    if (p.type === 'CONSECUTIVE_TRIPLETS') return p.rank === 13
+    
+    return false
   }
 
   private chooseBid(playerId: string) {
@@ -813,21 +821,369 @@ export class OfflineEngine {
     return options[options.length - 1]
   }
 
+
+
   private choosePlay(legal: Card[][]) {
     if (legal.length === 0) return []
+    
+    // Use MCTS for hard/normal difficulty
+    if (this.difficulty !== 'easy') {
+        try {
+            const mcts = new MCTSEngine(this, this.currentTurn)
+            const bestMove = mcts.run(this.difficulty === 'hard' ? 800 : 300) // More iterations for hard
+            if (bestMove) return bestMove
+        } catch (e) {
+            console.error("MCTS Error, falling back", e)
+        }
+    }
+
+    // Fallback / Easy mode logic
     if (this.difficulty === 'easy') return pickN(legal, 1)[0]
+    
+    // Heuristic fallback
     const scored = legal.map(cards => ({ cards, s: scorePlay(cards) })).filter(x => x.s.valid)
     scored.sort((a, b) => {
-      if (this.difficulty === 'hard') {
-        if (b.s.count !== a.s.count) return b.s.count - a.s.count
-        return a.s.value - b.s.value
-      }
       if (a.s.value !== b.s.value) return a.s.value - b.s.value
       return a.s.count - b.s.count
     })
     return scored[0].cards
   }
 }
+
+// --- MCTS Implementation ---
+
+class MCTSNode {
+  // Map key: "code,code,code" -> MCTSNode
+  children: Map<string, MCTSNode> = new Map()
+  visits: number = 0
+  wins: number = 0 // Wins for the player who made the move to get HERE
+  
+  // Untried moves for the state represented by this node. 
+  // Note: In IS-MCTS, we don't store "state" in node because state is uncertain.
+  // But we store "untried moves" which are legal moves from the public information set?
+  // Actually, legal moves depend on the specific hand in determinization.
+  // Standard SO-ISMCTS:
+  // Node corresponds to [Action History].
+  // Children are [Action].
+  // We don't store untried moves here because they differ per determinization.
+  // We expand based on the current determinization's legal moves.
+
+  constructor(
+    public parent: MCTSNode | null = null,
+    public move: Card[] | null = null,
+    public playerId: string // Who made the move to get here
+  ) {}
+
+  get UCB1(): number {
+    if (this.visits === 0) return Infinity
+    // Exploitation + Exploration
+    // We want to maximize win rate for the player at `parent` node?
+    // No, standard UCB: Select child that maximizes: (child.wins/child.visits) + C * ...
+    // Child wins are stored from perspective of the player who moved to `child`.
+    // If it's my turn at `parent`, I want to choose `child` where I (parent.nextPlayer) win most.
+    // child.playerId is ME. So child.wins is MY wins. Correct.
+    return this.wins / this.visits + 1.414 * Math.sqrt(Math.log(this.parent!.visits) / this.visits)
+  }
+}
+
+class MCTSEngine {
+  constructor(private rootEngine: OfflineEngine, private myPlayerId: string) {}
+
+  // Information Set Monte Carlo Tree Search (Single Observer)
+  run(timeoutMs: number): Card[] {
+    const rootNode = new MCTSNode(null, null, '')
+    // Root represents "Current state before I move".
+    // I am `myPlayerId`.
+
+    const startTime = Date.now()
+    let iterations = 0
+
+    // Clone basic info once
+    const allCards = this.getAllCards()
+    const myHand = this.rootEngine.playersHand[this.myPlayerId] || []
+    // Identify unknown cards: All cards - My Hand - All Played Cards
+    const playedCards = Object.values(this.rootEngine.playedCardsByPlayer).flat()
+    const knownCodes = new Set([...myHand.map(c => c.code), ...playedCards.map(c => c.code)])
+    const unknownCards = allCards.filter(c => !knownCodes.has(c.code))
+    
+    // Opponent card counts
+    const opponentCounts: Record<string, number> = {}
+    for (const p of this.rootEngine.players) {
+        if (p.id !== this.myPlayerId) {
+            opponentCounts[p.id] = (this.rootEngine.playersHand[p.id] || []).length
+        }
+    }
+
+    while (Date.now() - startTime < timeoutMs) {
+      iterations++
+      
+      // 1. Determinization: Create a specific world state compatible with public info
+      const determinizedState = this.determinize(myHand, unknownCards, opponentCounts)
+      
+      // 2. Selection: Traverse tree using UCB until we hit a node with untried moves (for this determinization)
+      let node = rootNode
+      let state = determinizedState
+
+      // While node is fully expanded AND not terminal
+      while (true) {
+        // Get legal moves for current state
+        const legalMoves = this.getLegalMoves(state, state.currentTurn)
+        if (legalMoves.length === 0 && state.phase === 'PLAYING') {
+            // Must pass (or game over if everyone passes? No, engine handles auto-pass logic usually)
+            // If empty, it's a pass.
+            // But wait, getLegalMoves returns [] for pass?
+            // Engine pass logic: if cannot beat, pass.
+            // Let's normalize: [] means Pass.
+        }
+
+        if (state.roomStatus === 'FINISHED') break
+
+        // Identify untried moves from THIS node given current state
+        // A child exists for a move?
+        const untried = legalMoves.filter(m => !node.children.has(this.getMoveKey(m)))
+        
+        if (untried.length > 0) {
+          // 3. Expansion: Pick one untried move, add child, advance state
+          const move = untried[Math.floor(Math.random() * untried.length)]
+          const moveKey = this.getMoveKey(move)
+          
+          // Apply move to state
+          const mover = state.currentTurn
+          this.applyMove(state, mover, move)
+          
+          const child = new MCTSNode(node, move, mover)
+          node.children.set(moveKey, child)
+          node = child
+          break // Proceed to simulation
+        } else {
+          // Fully expanded (for this determinization state!), select best child using UCB
+          // Filter children to only those VALID in current state (important for IS-MCTS!)
+          // Because tree might have children from OTHER determinizations that are illegal here.
+          const validChildren = legalMoves
+            .map(m => node.children.get(this.getMoveKey(m)))
+            .filter((n): n is MCTSNode => !!n)
+
+          if (validChildren.length === 0) break // Should not happen unless terminal
+
+          // Select best
+          node = validChildren.reduce((a, b) => a.UCB1 > b.UCB1 ? a : b)
+          this.applyMove(state, node.playerId, node.move!)
+        }
+      }
+
+      // 4. Simulation (Rollout)
+      this.simulate(state)
+
+      // 5. Backpropagation
+      // Check winner
+      const amIWinner = state.winnerId === this.myPlayerId || 
+        (state.winnerSide && state.winnerSide === (this.rootEngine.diggerId === this.myPlayerId ? 'DIGGER' : 'OTHERS'))
+      
+      const winScore = amIWinner ? 1 : 0
+      
+      // Propagate up
+      let curr: MCTSNode | null = node
+      while (curr) {
+        curr.visits++
+        // If this node was reached by ME making a move, and I won, that's good.
+        // If this node was reached by OPPONENT making a move, and I won, that's bad for opponent (good for me).
+        // Standard MCTS: Nodes store wins for the player who JUST moved.
+        // So if `curr.playerId` is ME, and I won, add 1.
+        // If `curr.playerId` is OPPONENT, and I won, add 0 (or -1?).
+        // Actually simpler: Store wins for the player who made the move.
+        // If `curr.playerId` won in `state`, add 1.
+        
+        const nodePlayerWon = state.winnerId === curr.playerId ||
+            (state.winnerSide && state.winnerSide === (this.rootEngine.diggerId === curr.playerId ? 'DIGGER' : 'OTHERS'))
+            
+        if (nodePlayerWon) curr.wins++
+        
+        curr = curr.parent
+      }
+    }
+    
+    // Return best move from root
+    // Max visits is robust
+    let bestMove: Card[] = []
+    let maxVisits = -1
+    
+    // Only consider legal moves for the ACTUAL root state (my real hand)
+    const rootLegal = this.getLegalMoves(this.rootEngine, this.myPlayerId)
+    const rootLegalKeys = new Set(rootLegal.map(m => this.getMoveKey(m)))
+    
+    for (const [key, child] of rootNode.children) {
+        if (!rootLegalKeys.has(key)) continue
+        if (child.visits > maxVisits) {
+            maxVisits = child.visits
+            bestMove = child.move!
+        }
+    }
+    
+    // Log for debugging
+    console.log(`MCTS: ${iterations} iterations. Best: ${bestMove.map(c=>c.code).join(',')}`)
+    return bestMove
+  }
+
+  private getAllCards(): Card[] {
+     // Recreate full deck
+     const deck: Card[] = []
+     for (let rank = 3; rank <= 15; rank++) {
+         for (const suit of ['H', 'D', 'C', 'S'] as Suit[]) {
+             deck.push({ suit, rank, code: `${suit}${rank}` })
+         }
+     }
+     return deck
+  }
+
+  private determinize(myHand: Card[], unknownCards: Card[], opponentCounts: Record<string, number>): OfflineEngine {
+      const state = this.cloneEngine(this.rootEngine)
+      
+      // Shuffle unknown cards
+      const shuffled = [...unknownCards]
+      for (let i = shuffled.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1))
+          ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+      }
+      
+      // Distribute to opponents
+      let idx = 0
+      for (const pid in opponentCounts) {
+          const count = opponentCounts[pid]
+          state.playersHand[pid] = sortCards(shuffled.slice(idx, idx + count))
+          idx += count
+      }
+      // Note: Hole cards? If we are in PLAYING phase, hole cards are already taken or known?
+      // In PLAYING phase, hole cards are either in someone's hand or irrelevant.
+      // If we are tracking played cards, `unknownCards` accounts for everything not seen.
+      // So this is correct.
+      
+      return state
+  }
+
+  private cloneEngine(source: OfflineEngine): OfflineEngine {
+      const clone = Object.create(Object.getPrototypeOf(source))
+      Object.assign(clone, source)
+      clone.playersHand = { ...source.playersHand } // Shallow copy of map is enough as we replace arrays
+      clone.playedCardsByPlayer = { ...source.playedCardsByPlayer }
+      clone.playedMovesByPlayer = { ...source.playedMovesByPlayer }
+      if (source.lastMove) clone.lastMove = { ...source.lastMove }
+      return clone
+  }
+
+  private getMoveKey(cards: Card[]): string {
+      return cards.map(c => c.code).sort().join(',')
+  }
+
+  private getLegalMoves(engine: OfflineEngine, playerId: string): Card[][] {
+      const hand = engine.playersHand[playerId] || []
+      const plays = generatePlays(hand).filter(cards => analyzeHand(cards) !== null)
+      const mustFollow = !!engine.lastMove && engine.lastMove.playerId !== playerId
+      const legal = mustFollow ? plays.filter(ply => canBeat(ply, engine.lastMove!.cards)) : plays
+      if (mustFollow && legal.length === 0) return [] 
+      return legal
+  }
+
+  private applyMove(engine: OfflineEngine, playerId: string, cards: Card[]) {
+      if (cards.length === 0) {
+          engine.pass(playerId)
+      } else {
+          // We need a robust internal play method that doesn't trigger UI/Undo logic
+          // Re-implement minimal logic here for speed
+          const hand = engine.playersHand[playerId] || []
+          const cardCodes = new Set(cards.map(c => c.code))
+          engine.playersHand[playerId] = hand.filter(c => !cardCodes.has(c.code))
+          
+          // Update last move
+          const pattern = analyzeHand(cards)!
+          engine.lastMove = { playerId, cards, pattern }
+          engine.passCount = 0
+          
+          // Check win
+          if (engine.playersHand[playerId].length === 0) {
+              engine.roomStatus = 'FINISHED'
+              engine.winnerId = playerId
+              if (engine.diggerId) engine.winnerSide = engine.diggerId === playerId ? 'DIGGER' : 'OTHERS'
+              return
+          }
+          
+          // Check max (Optimization: if max, keep turn)
+          // For simulation, we can skip this or implement it. 
+          // If we implement it, we don't advance turn.
+          // Let's implement basic max check
+           if (this.isMax(engine, cards, pattern)) {
+               engine.currentTurn = playerId
+               return
+           }
+      }
+      
+      // Next turn
+      const idx = engine.players.findIndex(p => p.id === playerId)
+      let nextIdx = (idx + 1) % engine.players.length
+      engine.currentTurn = engine.players[nextIdx].id
+      
+      if (cards.length === 0) {
+          engine.passCount++
+          if (engine.passCount >= engine.players.length - 1 && engine.lastMove) {
+              engine.currentTurn = engine.lastMove.playerId
+              engine.lastMove = null
+              engine.passCount = 0
+          }
+      }
+  }
+
+  private isMax(engine: OfflineEngine, cards: Card[], pattern: HandPattern): boolean {
+      // Simplified absolute max check
+      if (pattern.type === 'SINGLE' || pattern.type === 'PAIR' || pattern.type === 'TRIPLET' || pattern.type === 'QUAD') {
+          return pattern.rank === 3 // Rank 3 is highest (value 13)
+      }
+      if (['STRAIGHT', 'CONSECUTIVE_PAIRS', 'CONSECUTIVE_TRIPLETS'].includes(pattern.type)) {
+          return pattern.rank === 13 // K is highest end for straights
+      }
+      return false
+  }
+
+  private simulate(state: OfflineEngine) {
+      let depth = 0
+      while (state.roomStatus === 'PLAYING' && depth < 60) {
+          const pid = state.currentTurn
+          const hand = state.playersHand[pid] || []
+          const legal = this.getLegalMoves(state, pid)
+          
+          if (legal.length === 0) {
+              this.applyMove(state, pid, [])
+          } else {
+              // Heuristic Play:
+              // 1. Prefer playing cards if possible (avoid passing if free play)
+              // 2. Avoid single cards if possible, unless it's a high single
+              
+              let chosen: Card[]
+              if (!state.lastMove || state.lastMove.playerId === pid) {
+                  // Free play
+                  // Try to play longest patterns or smallest non-single
+                  // Filter out singles unless that's all we have
+                  const nonSingles = legal.filter(m => m.length > 1)
+                  if (nonSingles.length > 0) {
+                      // Pick random non-single
+                      chosen = nonSingles[Math.floor(Math.random() * nonSingles.length)]
+                  } else {
+                      // Only singles
+                      chosen = legal[Math.floor(Math.random() * legal.length)]
+                  }
+              } else {
+                  // Must follow
+                  // Try to win low? Random is fine for now, but weighted random better.
+                  // Prefer passing if we only have high cards and bid is low? Too complex.
+                  // Just random valid move.
+                  chosen = legal[Math.floor(Math.random() * legal.length)]
+              }
+              this.applyMove(state, pid, chosen)
+          }
+          depth++
+      }
+  }
+}
+
+
 
 export function pickAiNames(params: { preset: string[]; exclude: string; count: number }) {
   const pool = params.preset.filter(n => n !== params.exclude)
