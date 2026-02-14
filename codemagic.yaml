@@ -1,6 +1,6 @@
 workflows:
-  ios-final-build:
-    name: iOS Final Build
+  ios-terminator-build:
+    name: 💀 Terminator Build (Force Clean)
     max_build_duration: 120
     instance_type: mac_mini_m1
     environment:
@@ -15,47 +15,76 @@ workflows:
       branch_patterns:
         - pattern: main
     scripts:
-      - name: Install dependencies & Build Web
+      - name: 🧹 PRE-FLIGHT: Nuke Everything (强制清理)
         script: |
-          # 1. 进入你的项目目录
-          cd client/app
+          echo "⚠️ 正在启动核弹清理程序..."
+          
+          # 1. 下载当前所有的发布证书列表 (JSON格式)
+          app-store-connect certificates list --type IOS_DISTRIBUTION --save-to-file certs.json
+          
+          # 2. 使用 Python 解析列表并逐个撤销 (Revoke)
+          python3 -c "
+          import json, os
+          try:
+              with open('certs.json') as f:
+                  data = json.load(f)
+                  certs = data.get('data', [])
+                  if not certs:
+                      print('✅ 没有发现幽灵证书，环境干净。')
+                  for cert in certs:
+                      cert_id = cert['id']
+                      print(f'🚫 发现幽灵证书: {cert_id}，正在销毁...')
+                      os.system(f'app-store-connect certificates revoke --id {cert_id}')
+          except Exception as e:
+              print(f'处理证书时出错 (可能已经是干净的): {e}')
+          "
 
-          # 2. 安装依赖并构建
+          # 3. 下载所有的描述文件 (Profiles)
+          app-store-connect profiles list --type IOS_APP_STORE --save-to-file profiles.json
+          
+          # 4. 删除所有相关的描述文件 (防止它关联到旧证书)
+          python3 -c "
+          import json, os
+          try:
+              with open('profiles.json') as f:
+                  data = json.load(f)
+                  profiles = data.get('data', [])
+                  for p in profiles:
+                      p_id = p['id']
+                      # 这里为了保险，把所有的发布描述文件都删了，反正会自动重建
+                      print(f'🗑️ 删除旧描述文件: {p_id}...')
+                      os.system(f'app-store-connect profiles delete --id {p_id}')
+          except:
+              pass
+          "
+          echo "✅ 清理完成！Apple 后台现在是一片废墟，准备重建。"
+
+      - name: Install & Build Web
+        script: |
+          cd client/app
           npm install
           npm run build
-
-          # 3. 同步资源
           npx cap sync ios
 
       - name: Initialize Keychain
         script: keychain initialize
 
-      - name: Auto Code Signing
+      - name: Auto Code Signing (Force New)
         script: |
-          # 4. 路径：client -> app -> ios -> App -> App.xcodeproj
+          # 此时环境已真空，这行命令必定会创建新证书
           PROJECT_PATH="client/app/ios/App/App.xcodeproj"
-
-          # 获取 Bundle ID
           APP_ID=$(xcode-project detect-bundle-id --project "$PROJECT_PATH")
-          echo "Detected Bundle ID: $APP_ID"
-
-          # 🔥 关键一步：
-          # 因为刚才检测到证书列表是空的，这里带上 --create 参数
-          # Codemagic 会发现没证书，于是自动创建一个新的！
+          
+          # --create 参数现在会畅通无阻
           app-store-connect fetch-signing-files "$APP_ID" --type IOS_APP_STORE --create
           
           keychain add-certificates
 
-      - name: Set up code signing
-        script: |
-          PROJECT_PATH="client/app/ios/App/App.xcodeproj"
-          xcode-project use-profiles --project "$PROJECT_PATH"
-
       - name: Build IPA
         script: |
-          WORKSPACE_PATH="client/app/ios/App/App.xcworkspace"
+          xcode-project use-profiles --project "client/app/ios/App/App.xcodeproj"
           xcode-project build-ipa \
-            --workspace "$WORKSPACE_PATH" \
+            --workspace "client/app/ios/App/App.xcworkspace" \
             --scheme "App"
 
     artifacts:
