@@ -62,7 +62,7 @@ workflows:
     publishing:
       email:
         recipients:
-          - 你的邮箱@example.com  # 构建成功发个邮件通知你
+          - quanrunqi0401@163.com  # 构建成功发个邮件通知你
       app_store_connect:
         # 使用刚才配置的 API Key
         api_key: $APP_STORE_CONNECT_PRIVATE_KEY
