@@ -1,13 +1,16 @@
 import fs from 'fs'
+import path from 'path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tsconfigPaths from 'vite-tsconfig-paths'
 
 export default defineConfig(({ command }) => {
-  const certPath = process.env.VITE_HTTPS_CERT_PATH || ''
-  const keyPath = process.env.VITE_HTTPS_KEY_PATH || ''
+  const certPath = process.env.VITE_HTTPS_CERT_PATH || path.resolve(__dirname, '../../.certs/poker3.local+lan.pem')
+  const keyPath = process.env.VITE_HTTPS_KEY_PATH || path.resolve(__dirname, '../../.certs/poker3.local+lan-key.pem')
+  const certExists = fs.existsSync(certPath)
+  const keyExists = fs.existsSync(keyPath)
   const https =
-    certPath && keyPath
+    certExists && keyExists
       ? {
           cert: fs.readFileSync(certPath),
           key: fs.readFileSync(keyPath),
@@ -24,12 +27,12 @@ export default defineConfig(({ command }) => {
       https,
       proxy: {
         '/api': {
-          target: 'https://localhost:3001',
+          target: https ? 'https://localhost:3001' : 'http://localhost:3001',
           secure: false,
           changeOrigin: true,
         },
         '/ws': {
-          target: 'https://localhost:3001',
+          target: https ? 'https://localhost:3001' : 'http://localhost:3001',
           secure: false,
           ws: true,
           changeOrigin: true,

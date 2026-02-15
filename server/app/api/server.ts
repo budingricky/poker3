@@ -1,23 +1,35 @@
 /**
  * local server entry file, for local development
  */
+import 'dotenv/config';
 import app from './app.js';
 import { createServer as createHttpServer } from 'http';
 import { createServer as createHttpsServer } from 'https';
 import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { socketService } from './services/socketService.js';
 import { gameService } from './services/gameService.js';
 import { roomService } from './services/roomService.js';
 import { RoomStatus } from './models/types.js';
 import { startUdpDiscovery, type UdpDiscoveryHandle } from './udpDiscovery.js';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 /**
  * start server with port
  */
 const PORT = process.env.PORT || 3001;
-const SSL_CERT_PATH = process.env.SSL_CERT_PATH || ''
-const SSL_KEY_PATH = process.env.SSL_KEY_PATH || ''
-const USE_HTTPS = !!(SSL_CERT_PATH && SSL_KEY_PATH)
+const SSL_CERT_PATH = process.env.SSL_CERT_PATH || path.resolve(__dirname, '../../.certs/poker3.local+lan.pem')
+const SSL_KEY_PATH = process.env.SSL_KEY_PATH || path.resolve(__dirname, '../../.certs/poker3.local+lan-key.pem')
+
+const certExists = fs.existsSync(SSL_CERT_PATH)
+const keyExists = fs.existsSync(SSL_KEY_PATH)
+const USE_HTTPS = certExists && keyExists
+
+if (USE_HTTPS) {
+  console.log(`Using HTTPS with cert: ${SSL_CERT_PATH}`)
+}
 
 const httpServer = USE_HTTPS
   ? createHttpsServer(
@@ -42,7 +54,8 @@ socketService.setOnPlayerOffline((roomId, _playerId) => {
 });
 
 httpServer.listen(Number(PORT), '0.0.0.0', () => {
-  console.log(`Server ready on port ${PORT}`);
+  const protocol = USE_HTTPS ? 'https' : 'http';
+  console.log(`Server ready on ${protocol}://0.0.0.0:${PORT}`);
   const addr = httpServer.address();
   const httpPort =
     typeof addr === 'object' && addr && typeof addr.port === 'number' ? addr.port : Number(PORT);

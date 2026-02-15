@@ -9,6 +9,7 @@ import Room from './pages/Room'
 import './index.css'
 
 const BGM_ENABLED_KEY = 'poker3.bgmEnabled'
+const BGM_VOLUME_KEY = 'poker3.bgmVolume'
 const DEFAULT_BGM_VOLUME = 0.22
 
 function LegacyRoomRedirect() {
@@ -60,12 +61,23 @@ function MusicManager() {
             }
         }
 
+        const readVolume = () => {
+            const raw = window.localStorage.getItem(BGM_VOLUME_KEY)
+            if (raw !== null) {
+                const vol = parseFloat(raw)
+                if (!isNaN(vol) && vol >= 0 && vol <= 1) {
+                    baseVolumeRef.current = vol
+                }
+            }
+        }
+
         const setVolume = (vol: number) => {
             const v = Math.max(0, Math.min(1, vol))
             if (lobbyAudioRef.current) lobbyAudioRef.current.volume = v
             if (gameAudioRef.current) gameAudioRef.current.volume = v
         }
 
+        readVolume()
         readEnabled()
         setVolume(baseVolumeRef.current)
 
@@ -79,6 +91,14 @@ function MusicManager() {
             else lobbyAudioRef.current?.play().catch(() => {})
         }
 
+        const onVolumeChange = (e: CustomEvent) => {
+            const vol = e.detail.volume
+            if (typeof vol === 'number') {
+                baseVolumeRef.current = Math.max(0, Math.min(1, vol))
+                setVolume(baseVolumeRef.current)
+            }
+        }
+
         const onMicOn = () => {
             if (!enabledRef.current) return
             setVolume(Math.max(0, baseVolumeRef.current * 0.25))
@@ -89,10 +109,12 @@ function MusicManager() {
         }
 
         window.addEventListener('poker3-bgm-toggle', onToggle)
+        window.addEventListener('poker3-bgm-volume', onVolumeChange as EventListener)
         window.addEventListener('trtc-mic-enabled', onMicOn)
         window.addEventListener('trtc-mic-disabled', onMicOff)
         return () => {
             window.removeEventListener('poker3-bgm-toggle', onToggle)
+            window.removeEventListener('poker3-bgm-volume', onVolumeChange as EventListener)
             window.removeEventListener('trtc-mic-enabled', onMicOn)
             window.removeEventListener('trtc-mic-disabled', onMicOff)
         }
@@ -115,29 +137,64 @@ function MusicManager() {
     return null
 }
 
-function BgmToggle() {
+function BgmControls() {
   const [enabled, setEnabled] = React.useState(() => {
     const raw = window.localStorage.getItem(BGM_ENABLED_KEY)
     return raw === null ? true : raw === '1'
   })
+  
+  const [volume, setVolume] = React.useState(() => {
+    const raw = window.localStorage.getItem(BGM_VOLUME_KEY)
+    if (raw !== null) {
+      const vol = parseFloat(raw)
+      if (!isNaN(vol) && vol >= 0 && vol <= 1) {
+        return vol
+      }
+    }
+    return DEFAULT_BGM_VOLUME
+  })
+
+  const handleToggle = () => {
+    const next = !enabled
+    setEnabled(next)
+    window.localStorage.setItem(BGM_ENABLED_KEY, next ? '1' : '0')
+    window.dispatchEvent(new CustomEvent('poker3-bgm-toggle'))
+  }
+
+  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newVolume = parseFloat(e.target.value)
+    setVolume(newVolume)
+    window.localStorage.setItem(BGM_VOLUME_KEY, newVolume.toString())
+    window.dispatchEvent(new CustomEvent('poker3-bgm-volume', { detail: { volume: newVolume } }))
+  }
 
   return (
-    <button
-      type="button"
-      onClick={() => {
-        const next = !enabled
-        setEnabled(next)
-        window.localStorage.setItem(BGM_ENABLED_KEY, next ? '1' : '0')
-        window.dispatchEvent(new CustomEvent('poker3-bgm-toggle'))
-      }}
-      className={[
-        'fixed left-3 bottom-3 z-[60] rounded-full px-4 py-2 text-sm font-bold border backdrop-blur',
-        enabled ? 'bg-white/10 hover:bg-white/15 border-white/20 text-white' : 'bg-black/50 hover:bg-black/60 border-white/10 text-white/80',
-      ].join(' ')}
-      title={enabled ? '点击关闭背景音乐' : '点击开启背景音乐'}
-    >
-      {enabled ? 'BGM 开' : 'BGM 关'}
-    </button>
+    <div className="fixed left-3 bottom-3 z-[60] flex items-center gap-3">
+      <button
+        type="button"
+        onClick={handleToggle}
+        className={[
+          'rounded-full px-4 py-2 text-sm font-bold border backdrop-blur',
+          enabled ? 'bg-white/10 hover:bg-white/15 border-white/20 text-white' : 'bg-black/50 hover:bg-black/60 border-white/10 text-white/80',
+        ].join(' ')}
+        title={enabled ? '点击关闭背景音乐' : '点击开启背景音乐'}
+      >
+        {enabled ? 'BGM 开' : 'BGM 关'}
+      </button>
+      
+      <div className="flex items-center gap-2 rounded-full px-4 py-2 bg-white/10 border border-white/20 backdrop-blur">
+        <span className="text-xs text-white font-medium min-w-[32px]">{Math.round(volume * 100)}%</span>
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value={volume}
+          onChange={handleVolumeChange}
+          className="w-20 h-2 bg-white/20 rounded-lg appearance-none cursor-pointer slider"
+        />
+      </div>
+    </div>
   )
 }
 
@@ -145,7 +202,7 @@ function App() {
   return (
     <Router>
       <MusicManager />
-      <BgmToggle />
+      <BgmControls />
       <div className="min-h-screen bg-gray-50 text-gray-900">
         <Routes>
           <Route path="/" element={<ModeSelect />} />

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "nodemon",
+    "dev:https": "dotenv -e .env -- nodemon",
     "server:dev": "nodemon",
     "test": "tsx tests/gameLogic.test.ts",
     "check": "tsc --noEmit"

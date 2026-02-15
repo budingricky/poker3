@@ -576,7 +576,7 @@ export async function computeAiPlayMove(game: GameState, myPlayerId: string, pla
     engine.playedMovesByPlayer = JSON.parse(JSON.stringify(game.playedMovesByPlayer)) as Record<string, PlayedMove[]>
     
     engine.currentTurn = game.currentTurn
-    engine.phase = game.phase
+    engine.phase = game.phase as any
     engine.bidScore = game.bidScore
     engine.diggerId = game.diggerId
     engine.passCount = game.passCount

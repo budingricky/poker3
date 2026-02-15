@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:https": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "check": "tsc --noEmit",
