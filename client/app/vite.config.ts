@@ -1,41 +1,32 @@
-import fs from 'fs'
-import path from 'path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tsconfigPaths from 'vite-tsconfig-paths'
 
 export default defineConfig(({ command }) => {
-  const certPath = process.env.VITE_HTTPS_CERT_PATH || path.resolve(__dirname, '../../.certs/poker3.local+lan.pem')
-  const keyPath = process.env.VITE_HTTPS_KEY_PATH || path.resolve(__dirname, '../../.certs/poker3.local+lan-key.pem')
-  const certExists = fs.existsSync(certPath)
-  const keyExists = fs.existsSync(keyPath)
-  const https =
-    certExists && keyExists
-      ? {
-          cert: fs.readFileSync(certPath),
-          key: fs.readFileSync(keyPath),
-        }
-      : undefined
-
   return {
     base: command === 'build' ? './' : '/',
     plugins: [react(), tsconfigPaths({ projects: ['./tsconfig.json'] })],
     server: {
       host: true,
-      port: 5173,
-      strictPort: true,
-      https,
+      port: 5174,
+      strictPort: false,
       proxy: {
         '/api': {
-          target: https ? 'https://localhost:3001' : 'http://localhost:3001',
+          target: 'http://localhost:3001',
           secure: false,
           changeOrigin: true,
         },
         '/ws': {
-          target: https ? 'wss://localhost:3001' : 'ws://localhost:3001',
+          target: 'ws://localhost:3001',
           secure: false,
           ws: true,
           changeOrigin: true,
+        },
+        '/beijing': {
+          target: 'http://39.105.107.234:3001',
+          secure: false,
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/beijing/, ''),
         },
       },
       watch: {
@@ -47,9 +38,8 @@ export default defineConfig(({ command }) => {
     },
     preview: {
       host: true,
-      port: 5173,
-      strictPort: true,
-      https,
+      port: 5174,
+      strictPort: false,
     },
   }
 })

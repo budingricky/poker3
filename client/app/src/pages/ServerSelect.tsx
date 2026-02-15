@@ -4,6 +4,7 @@ import BackButton from '../components/BackButton'
 import ConnectFlow, { type ConnectStep } from '../components/ConnectFlow'
 import { discoverLanServers, type DiscoveredServer } from '../services/lanDiscovery'
 import { clearServerBaseUrl, getServerBaseUrl, normalizeBaseUrl, setServerBaseUrl } from '../services/serverConfig'
+import { socket } from '../services/socket'
 
 type Mode = 'online' | 'lan'
 
@@ -53,19 +54,54 @@ async function checkWs(wsUrl: string, timeoutMs: number, retries = 3) {
   throw lastError
 }
 
-async function fetchServerInfo(baseUrl: string, timeoutMs: number) {
+async function fetchServerInfo(baseUrl: string, timeoutMs: number, isBeijing: boolean = false, isDev: boolean = false) {
   const controller = new AbortController()
   const timer = window.setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const res = await fetch(`${baseUrl}/api/info`, { method: 'GET', cache: 'no-store', signal: controller.signal })
+    const requestUrl = `${baseUrl}/api/info`
+    console.log('Fetching server info from:', requestUrl)
+    
+    const res = await fetch(requestUrl, { 
+      method: 'GET', 
+      cache: 'no-store', 
+      signal: controller.signal,
+      headers: {
+        'Accept': 'application/json',
+      }
+    })
+    
+    console.log('Response status:', res.status, res.statusText)
+    
+    const contentType = res.headers.get('content-type') || ''
+    console.log('Content-Type:', contentType)
+    
+    if (!contentType.includes('application/json')) {
+      const text = await res.text()
+      console.error('Server returned non-JSON response. Full text:', text)
+      console.error('Response snippet:', text.substring(0, 500))
+      throw new Error(`服务端返回了非 JSON 响应 (${res.status}): ${text.substring(0, 100)}`)
+    }
+    
     const json = (await res.json()) as any
+    console.log('JSON response:', json)
+    
     if (!res.ok || json?.success === false) throw new Error(typeof json?.error === 'string' ? json.error : '服务端不可用')
     const data = json?.data || json
-    // 优先使用当前连接成功的 baseUrl 推导 WebSocket 地址，避免服务端返回的 IP 不可达（如多网卡情况）
     const wsPath = String(data?.wsPath || '/ws').trim()
-    let wsUrl = baseUrl.replace(/^http/i, 'ws').replace(/\/+$/, '') + (wsPath.startsWith('/') ? wsPath : '/' + wsPath)
-    if (baseUrl.startsWith('https://')) wsUrl = wsUrl.replace(/^ws:\/\//i, 'wss://')
+    let wsUrl: string
+    
+    if (isDev && isBeijing) {
+      wsUrl = `ws://${window.location.host}/beijing/ws`
+    } else {
+      wsUrl = baseUrl.replace(/^http/i, 'ws').replace(/\/+$/, '') + (wsPath.startsWith('/') ? wsPath : '/' + wsPath)
+      if (baseUrl.startsWith('https://')) wsUrl = wsUrl.replace(/^ws:\/\//i, 'wss://')
+    }
+    
+    console.log('WebSocket URL:', wsUrl)
     return { wsUrl }
+  } catch (error) {
+    console.error('Error in fetchServerInfo:', error)
+    throw error
   } finally {
     window.clearTimeout(timer)
   }
@@ -74,6 +110,7 @@ async function fetchServerInfo(baseUrl: string, timeoutMs: number) {
 const sleep = (ms: number) => new Promise<void>(resolve => window.setTimeout(resolve, ms))
 
 async function fetchWithTimeout(url: string, timeoutMs: number, init?: RequestInit) {
+  console.log('Fetching URL:', url)
   const timeoutController = new AbortController()
   const timer = window.setTimeout(() => timeoutController.abort(), timeoutMs)
 
@@ -81,7 +118,16 @@ async function fetchWithTimeout(url: string, timeoutMs: number, init?: RequestIn
   const onExternalAbort = () => timeoutController.abort()
   try {
     if (external) external.addEventListener('abort', onExternalAbort, { once: true })
-    return await fetch(url, { cache: 'no-store', ...init, signal: timeoutController.signal })
+    const response = await fetch(url, { 
+      cache: 'no-store', 
+      ...init, 
+      signal: timeoutController.signal 
+    })
+    console.log('Fetch response status:', response.status, response.statusText)
+    return response
+  } catch (error) {
+    console.error('Fetch failed for URL', url, 'Error:', error)
+    throw error
   } finally {
     if (external) external.removeEventListener('abort', onExternalAbort)
     window.clearTimeout(timer)
@@ -108,8 +154,8 @@ export default function ServerSelect({ mode }: { mode: Mode }) {
 
   const onlineServers = useMemo(() => {
     return [
-      { name: '中国北京节点', httpUrl: normalizeBaseUrl('https://39.105.107.234:3001') },
       { name: '中国香港节点', httpUrl: normalizeBaseUrl('https://api.poker.bd1bmc.xyz') },
+      { name: '中国北京节点', httpUrl: normalizeBaseUrl('http://39.105.107.234:3001') },
     ]
   }, [])
 
@@ -135,8 +181,16 @@ export default function ServerSelect({ mode }: { mode: Mode }) {
     }
   }, [mode])
 
-  const title = mode === 'online' ? '选择服务器' : '选择局域网服务器'
-  const subtitle = mode === 'online' ? '选择您最近的节点以获得最佳体验。' : '自动发现同一局域网内的 Poker3 服务端。'
+  useEffect(() => {
+    if (mode === 'online') {
+      socket.disconnect()
+      clearServerBaseUrl()
+      setServerInput('')
+    }
+  }, [mode])
+
+  const title = mode === 'online' ? '连接服务器' : '选择局域网服务器'
+  const subtitle = mode === 'online' ? '连接到 Poker3 北京服务器。' : '自动发现同一局域网内的 Poker3 服务端。'
 
   const runConnectFlow = async (params: { baseUrl: string; displayName: string }) => {
     if (busyRef.current) return
@@ -186,14 +240,31 @@ export default function ServerSelect({ mode }: { mode: Mode }) {
 
     try {
       const baseUrl = params.baseUrl
-      await runStep('ping', 800, async () => {
-        const res = await fetchWithTimeout(`${baseUrl}/api/health`, 1200, { method: 'GET', signal: abortRef.current?.signal })
+      const isBeijing = baseUrl.includes('39.105.107.234')
+      const isDev = import.meta.env.DEV && typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+      
+      console.log('Connection info:', { 
+        baseUrl, 
+        isBeijing, 
+        isDev, 
+        hostname: window?.location?.hostname, 
+        protocol: window?.location?.protocol,
+        import_meta_env_DEV: import.meta.env.DEV 
+      })
+      
+      const apiBase = (isDev && isBeijing) ? '/beijing' : baseUrl
+      const wsBase = isDev && isBeijing 
+        ? `ws://${window.location.host}/beijing`
+        : baseUrl.replace(/^http/i, 'ws')
+      
+      await runStep('ping', 1500, async () => {
+        const res = await fetchWithTimeout(`${apiBase}/api/health`, 15000, { method: 'GET', signal: abortRef.current?.signal })
         if (!res.ok) throw new Error('Ping 失败：无法访问服务端')
       })
       activateNext('ping', 'api_health')
 
-      await runStep('api_health', 900, async () => {
-        const res = await fetchWithTimeout(`${baseUrl}/api/health`, 2500, { method: 'GET', signal: abortRef.current?.signal })
+      await runStep('api_health', 1500, async () => {
+        const res = await fetchWithTimeout(`${apiBase}/api/health`, 15000, { method: 'GET', signal: abortRef.current?.signal })
         const json = (await res.json().catch(() => null)) as any
         if (!res.ok || json?.success === false) {
           throw new Error(typeof json?.error === 'string' ? json.error : 'API 健康检查失败')
@@ -203,22 +274,21 @@ export default function ServerSelect({ mode }: { mode: Mode }) {
 
       const info = await (async () => {
         let out: { wsUrl: string } | null = null
-        await runStep('api_info', 900, async () => {
-          out = await fetchServerInfo(baseUrl, 2500)
+        await runStep('api_info', 1500, async () => {
+          out = await fetchServerInfo(apiBase, 15000, isBeijing, isDev)
         })
         return out!
       })()
       activateNext('api_info', 'ws')
 
-      await runStep('ws', 1200, async () => {
-        // 5s timeout, 3 retries = up to 15s+ total
-        const derivedWsUrl = baseUrl.replace(/^http/i, 'ws') + '/ws'
-        await checkWs(derivedWsUrl, 5000, 3)
+      await runStep('ws', 2000, async () => {
+        const derivedWsUrl = wsBase + '/ws'
+        await checkWs(derivedWsUrl, 15000, 3)
       })
       activateNext('ws', 'api_room')
 
-      await runStep('api_room', 900, async () => {
-        const res = await fetchWithTimeout(`${baseUrl}/api/room`, 3500, { method: 'GET', signal: abortRef.current?.signal })
+      await runStep('api_room', 1500, async () => {
+        const res = await fetchWithTimeout(`${apiBase}/api/room`, 15000, { method: 'GET', signal: abortRef.current?.signal })
         const json = (await res.json().catch(() => null)) as any
         if (!res.ok || json?.success === false) throw new Error(typeof json?.error === 'string' ? json.error : '大厅接口不可用')
       })

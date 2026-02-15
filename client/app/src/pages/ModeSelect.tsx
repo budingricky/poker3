@@ -1,11 +1,18 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { clearServerBaseUrl, getServerBaseUrl } from '../services/serverConfig'
+import { socket } from '../services/socket'
 
 export default function ModeSelect() {
   const saved = getServerBaseUrl()
 
   const [serverInput, setServerInput] = useState(saved || '')
+
+  const handleDisconnect = () => {
+    socket.disconnect()
+    clearServerBaseUrl()
+    setServerInput('')
+  }
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -16,10 +23,7 @@ export default function ModeSelect() {
         </div>
         {saved ? (
           <button
-            onClick={() => {
-              clearServerBaseUrl()
-              setServerInput('')
-            }}
+            onClick={handleDisconnect}
             className="rounded-full bg-white/80 hover:bg-white px-4 py-2 shadow-sm ring-1 ring-gray-200 text-gray-800 font-semibold"
           >
             断开服务器
