@@ -1,7 +1,7 @@
 import { getApiUrl } from './serverConfig'
 
-const DEFAULT_TIMEOUT = 10000
-const MAX_RETRIES = 2
+const DEFAULT_TIMEOUT = 30000
+const MAX_RETRIES = 3
 
 async function fetchWithRetry(url: string, init?: RequestInit, retries = MAX_RETRIES): Promise<Response> {
   let lastError: Error | null = null
@@ -20,7 +20,7 @@ async function fetchWithRetry(url: string, init?: RequestInit, retries = MAX_RET
       clearTimeout(timeoutId)
       lastError = e instanceof Error ? e : new Error(String(e))
       if (i < retries) {
-        await new Promise(resolve => setTimeout(resolve, 500 * (i + 1)))
+        await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)))
       }
     }
   }

@@ -16,7 +16,10 @@ class SocketClient {
   private lastOpenAt = 0
   private lastMessageAt = 0
   private heartbeatTimer: number | null = null
-  private heartbeatInterval = 30000
+  private heartbeatInterval = 45000
+  private connectTimeout = 30000
+  private minReconnectDelay = 2000
+  private maxReconnectDelay = 30000
 
   constructor() {
     subscribeServerBaseUrl(() => {
@@ -96,7 +99,7 @@ class SocketClient {
     } catch {
       this.ws = null
       if (!this.manualClose) {
-        const delay = Math.min(5000, 500 * Math.max(1, this.reconnectAttempts))
+        const delay = Math.min(this.maxReconnectDelay, this.minReconnectDelay * Math.pow(1.5, Math.min(10, this.reconnectAttempts)))
         this.reconnectAttempts += 1
         this.reconnectTimer = window.setTimeout(() => {
           this.reconnectTimer = null
@@ -112,7 +115,7 @@ class SocketClient {
         }
       } catch {
       }
-    }, 10000)
+    }, this.connectTimeout)
 
     this.ws.onopen = () => {
       window.clearTimeout(connectTimer)
@@ -161,7 +164,7 @@ class SocketClient {
         this.listeners['ws_close'].forEach(cb => cb(this.currentUrl))
       }
       if (!this.manualClose) {
-        const delay = Math.min(5000, 500 * Math.max(1, this.reconnectAttempts))
+        const delay = Math.min(this.maxReconnectDelay, this.minReconnectDelay * Math.pow(1.5, Math.min(10, this.reconnectAttempts)))
         this.reconnectAttempts += 1
         this.reconnectTimer = window.setTimeout(() => {
           this.reconnectTimer = null

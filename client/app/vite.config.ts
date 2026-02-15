@@ -32,7 +32,7 @@ export default defineConfig(({ command }) => {
           changeOrigin: true,
         },
         '/ws': {
-          target: https ? 'https://localhost:3001' : 'http://localhost:3001',
+          target: https ? 'wss://localhost:3001' : 'ws://localhost:3001',
           secure: false,
           ws: true,
           changeOrigin: true,

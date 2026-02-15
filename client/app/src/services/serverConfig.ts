@@ -1,4 +1,5 @@
 const STORAGE_KEY = 'poker3.serverBaseUrl'
+const DEFAULT_SERVER_URL = 'https://api.poker.bd1bmc.xyz'
 
 type Listener = (baseUrl: string) => void
 
@@ -6,8 +7,9 @@ const listeners = new Set<Listener>()
 let cachedBaseUrl = read()
 
 function read(): string {
-  if (typeof window === 'undefined') return ''
+  if (typeof window === 'undefined') return DEFAULT_SERVER_URL
   const raw = window.localStorage.getItem(STORAGE_KEY) ?? ''
+  if (!raw) return DEFAULT_SERVER_URL
   return normalizeBaseUrl(raw)
 }
 
@@ -73,9 +75,9 @@ export function setServerBaseUrl(input: string) {
 }
 
 export function clearServerBaseUrl() {
-  cachedBaseUrl = ''
+  cachedBaseUrl = DEFAULT_SERVER_URL
   window.localStorage.removeItem(STORAGE_KEY)
-  listeners.forEach(cb => cb(''))
+  listeners.forEach(cb => cb(DEFAULT_SERVER_URL))
 }
 
 export function subscribeServerBaseUrl(cb: Listener) {
@@ -84,10 +86,6 @@ export function subscribeServerBaseUrl(cb: Listener) {
 }
 
 export function getApiUrl(pathname: string) {
-  if (import.meta.env.DEV) {
-    const p = pathname.startsWith('/') ? pathname : `/${pathname}`
-    return p
-  }
   const base = getEffectiveBaseUrl(getServerBaseUrl())
   if (!base) throw new Error('未设置服务端地址')
   let effectiveBase = base
@@ -96,13 +94,6 @@ export function getApiUrl(pathname: string) {
 }
 
 export function getWsUrl() {
-  if (import.meta.env.DEV) {
-    if (typeof window === 'undefined') return ''
-    const protocol = window.location?.protocol === 'https:' ? 'wss' : 'ws'
-    const host = window.location?.host || ''
-    if (!host) return ''
-    return `${protocol}://${host}/ws`
-  }
   const base = getEffectiveBaseUrl(getServerBaseUrl())
   if (!base) throw new Error('未设置服务端地址')
   let effectiveBase = base
