@@ -614,9 +614,11 @@ class GameService {
     const hasStraightAbove = (len: number, needCountPerRank: number) => {
       const minRank = 3
       const maxRank = 13
+      const lastRankValue = getCompareValue(p.rank)
       for (let start = minRank; start <= maxRank - len + 1; start += 1) {
         const end = start + len - 1
-        if (end <= p.rank) continue
+        const endRankValue = getCompareValue(end)
+        if (endRankValue <= lastRankValue) continue
         let ok = true
         for (let r = start; r <= end; r += 1) {
           if ((counts.get(r) || 0) < needCountPerRank) {

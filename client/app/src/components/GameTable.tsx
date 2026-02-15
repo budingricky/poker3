@@ -106,9 +106,11 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
       const maxRank = 13
       const length = Number(len)
       if (!Number.isFinite(length) || length < 2) return false
+      const lastRankValue = getCompareValue(Number(p.rank))
       for (let start = minRank; start <= maxRank - length + 1; start += 1) {
         const end = start + length - 1
-        if (end <= Number(p.rank)) continue
+        const endRankValue = getCompareValue(end)
+        if (endRankValue <= lastRankValue) continue
         let ok = true
         for (let r = start; r <= end; r += 1) {
           if ((counts.get(r) || 0) < needCountPerRank) {
