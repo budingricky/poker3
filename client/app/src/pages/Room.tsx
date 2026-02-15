@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import BackButton from '../components/BackButton'
 import { api } from '../services/api'
@@ -12,6 +12,7 @@ export default function Room() {
   const { roomId } = useParams<{ roomId: string }>()
   const [room, setRoom] = useState<RoomType | null>(null)
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
   const [playerId, setPlayerId] = useState<string | null>(() => localStorage.getItem('playerId'))
   const [playerName, setPlayerName] = useState(() => localStorage.getItem('playerName') || '玩家')
@@ -25,6 +26,24 @@ export default function Room() {
       return serverBaseUrl
     }
   }, [serverBaseUrl])
+
+  const loadRoom = useCallback(async () => {
+    if (!roomId) return
+    setLoading(true)
+    try {
+      const res = await api.getRoom(roomId)
+      if (res.success) {
+        setRoom(res.data)
+        setError('')
+      } else {
+        setError(res.error)
+      }
+    } catch {
+      setError('加载房间失败')
+    } finally {
+      setLoading(false)
+    }
+  }, [roomId])
 
   useEffect(() => {
     if (!roomId) return
@@ -48,40 +67,31 @@ export default function Room() {
         loadRoom()
       }
     })()
-    
-    socket.on('game_started', () => {
+    const onGameStarted = () => {
       loadRoom()
-    })
-
-    socket.on('room_closed', () => {
-      alert('房间已解散');
+    }
+    const onRoomClosed = () => {
+      alert('房间已解散')
       navigate('/lan')
-    })
-
-    socket.on('room_update', () => {
+    }
+    const onRoomUpdate = () => {
       loadRoom()
-    })
+    }
+    const onWsOpen = () => {
+      loadRoom()
+    }
+    socket.on('game_started', onGameStarted)
+    socket.on('room_closed', onRoomClosed)
+    socket.on('room_update', onRoomUpdate)
+    socket.on('ws_open', onWsOpen)
 
     return () => {
-      socket.off('game_started')
-      socket.off('room_update')
-      socket.off('room_closed')
+      socket.off('game_started', onGameStarted)
+      socket.off('room_update', onRoomUpdate)
+      socket.off('room_closed', onRoomClosed)
+      socket.off('ws_open', onWsOpen)
     }
-  }, [navigate, roomId, playerId, playerName])
-
-  const loadRoom = async () => {
-    if (!roomId) return
-    try {
-        const res = await api.getRoom(roomId)
-        if (res.success) {
-          setRoom(res.data)
-        } else {
-          setError(res.error)
-        }
-    } catch (e) {
-        setError('加载房间失败')
-    }
-  }
+  }, [navigate, roomId, playerId, playerName, loadRoom])
   
   const handleStartGame = async () => {
       if (!roomId) return

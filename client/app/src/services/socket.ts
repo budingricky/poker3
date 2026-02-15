@@ -13,6 +13,10 @@ class SocketClient {
   private joinedRoomId: string | null = null
   private joinedPlayerId: string | null = null
   private currentUrl: string | null = null
+  private lastOpenAt = 0
+  private lastMessageAt = 0
+  private heartbeatTimer: number | null = null
+  private heartbeatInterval = 30000
 
   constructor() {
     subscribeServerBaseUrl(() => {
@@ -30,6 +34,30 @@ class SocketClient {
 
   getReadyState() {
     return this.ws ? this.ws.readyState : null
+  }
+
+  getLastOpenAt() {
+    return this.lastOpenAt || 0
+  }
+
+  getLastMessageAt() {
+    return this.lastMessageAt || 0
+  }
+
+  private startHeartbeat() {
+    this.stopHeartbeat()
+    this.heartbeatTimer = window.setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({ event: 'ping', data: Date.now() }))
+      }
+    }, this.heartbeatInterval)
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatTimer !== null) {
+      window.clearInterval(this.heartbeatTimer)
+      this.heartbeatTimer = null
+    }
   }
 
   private reconnectSoon() {
@@ -68,7 +96,7 @@ class SocketClient {
     } catch {
       this.ws = null
       if (!this.manualClose) {
-        const delay = Math.min(3000, 250 * Math.max(1, this.reconnectAttempts))
+        const delay = Math.min(5000, 500 * Math.max(1, this.reconnectAttempts))
         this.reconnectAttempts += 1
         this.reconnectTimer = window.setTimeout(() => {
           this.reconnectTimer = null
@@ -84,13 +112,15 @@ class SocketClient {
         }
       } catch {
       }
-    }, 5000)
+    }, 10000)
 
     this.ws.onopen = () => {
       window.clearTimeout(connectTimer)
       this.reconnectAttempts = 0
+      this.lastOpenAt = Date.now()
+      this.startHeartbeat()
       if (this.pendingMessages.length > 0) {
-        const messages = this.pendingMessages
+        const messages = [...this.pendingMessages]
         this.pendingMessages = []
         messages.forEach(m => {
           if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(m)
@@ -103,12 +133,19 @@ class SocketClient {
           : this.joinedRoomId
         this.emit('join_room', payload)
       }
+      if (this.listeners['ws_open']) {
+        this.listeners['ws_open'].forEach(cb => cb(this.currentUrl))
+      }
     }
 
     this.ws.onmessage = event => {
+      this.lastMessageAt = Date.now()
       try {
         const message = JSON.parse(event.data)
         const { event: eventName, data } = message
+        if (eventName === 'pong') {
+          return
+        }
         if (eventName && this.listeners[eventName]) {
           this.listeners[eventName].forEach(cb => cb(data))
         }
@@ -118,9 +155,13 @@ class SocketClient {
 
     this.ws.onclose = () => {
       window.clearTimeout(connectTimer)
+      this.stopHeartbeat()
       this.ws = null
+      if (this.listeners['ws_close']) {
+        this.listeners['ws_close'].forEach(cb => cb(this.currentUrl))
+      }
       if (!this.manualClose) {
-        const delay = Math.min(3000, 250 * Math.max(1, this.reconnectAttempts))
+        const delay = Math.min(5000, 500 * Math.max(1, this.reconnectAttempts))
         this.reconnectAttempts += 1
         this.reconnectTimer = window.setTimeout(() => {
           this.reconnectTimer = null
@@ -139,7 +180,9 @@ class SocketClient {
       this.ws.send(payload)
       return
     }
-    this.pendingMessages.push(payload)
+    if (this.pendingMessages.length < 50) {
+      this.pendingMessages.push(payload)
+    }
   }
 
   joinLobby() {
@@ -181,6 +224,7 @@ class SocketClient {
   }
 
   disconnect() {
+    this.stopHeartbeat()
     if (this.ws) {
       this.manualClose = true
       try {
@@ -196,6 +240,7 @@ class SocketClient {
       window.clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
     }
+    this.pendingMessages = []
   }
 }
 

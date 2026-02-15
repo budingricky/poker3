@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState, useCallback } from 'react'
 import BackButton from '../components/BackButton'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../services/api'
@@ -11,6 +11,7 @@ export default function Lobby() {
   const [playerName, setPlayerName] = useState('')
   const [newRoomName, setNewRoomName] = useState('')
   const [serverName, setServerName] = useState('')
+  const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
   const serverBaseUrl = getServerBaseUrl()
   const serverHostLabel = useMemo(() => {
@@ -21,6 +22,19 @@ export default function Lobby() {
       return serverBaseUrl
     }
   }, [serverBaseUrl])
+
+  const loadRooms = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await api.getRooms()
+      if (res.success) {
+        setRooms(res.data)
+      }
+    } catch (e) {
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
     if (!serverBaseUrl) {
@@ -36,7 +50,11 @@ export default function Lobby() {
     const onRoomUpdate = () => {
       loadRooms()
     }
+    const onWsOpen = () => {
+      loadRooms()
+    }
     socket.on('room_update', onRoomUpdate)
+    socket.on('ws_open', onWsOpen)
 
     api
       .info()
@@ -49,19 +67,10 @@ export default function Lobby() {
 
     return () => {
       socket.off('room_update', onRoomUpdate)
+      socket.off('ws_open', onWsOpen)
       socket.leaveLobby()
     }
-  }, [navigate, serverBaseUrl])
-
-  const loadRooms = async () => {
-    try {
-      const res = await api.getRooms()
-      if (res.success) {
-        setRooms(res.data)
-      }
-    } catch (e) {
-    }
-  }
+  }, [navigate, serverBaseUrl, loadRooms])
 
   const handleCreateRoom = async () => {
     if (!playerName) return alert('请输入您的昵称')

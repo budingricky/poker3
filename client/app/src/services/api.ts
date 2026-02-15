@@ -1,7 +1,34 @@
 import { getApiUrl } from './serverConfig'
 
+const DEFAULT_TIMEOUT = 10000
+const MAX_RETRIES = 2
+
+async function fetchWithRetry(url: string, init?: RequestInit, retries = MAX_RETRIES): Promise<Response> {
+  let lastError: Error | null = null
+  for (let i = 0; i <= retries; i++) {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT)
+    try {
+      const res = await fetch(url, {
+        cache: 'no-store',
+        ...init,
+        signal: controller.signal,
+      })
+      clearTimeout(timeoutId)
+      return res
+    } catch (e) {
+      clearTimeout(timeoutId)
+      lastError = e instanceof Error ? e : new Error(String(e))
+      if (i < retries) {
+        await new Promise(resolve => setTimeout(resolve, 500 * (i + 1)))
+      }
+    }
+  }
+  throw lastError || new Error('请求失败')
+}
+
 async function fetchJson(pathname: string, init?: RequestInit) {
-  const res = await fetch(getApiUrl(pathname), { cache: 'no-store', ...init })
+  const res = await fetchWithRetry(getApiUrl(pathname), init)
   return res.json()
 }
 

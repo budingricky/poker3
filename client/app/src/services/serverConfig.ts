@@ -91,15 +91,6 @@ export function getApiUrl(pathname: string) {
   const base = getEffectiveBaseUrl(getServerBaseUrl())
   if (!base) throw new Error('未设置服务端地址')
   let effectiveBase = base
-  if (typeof window !== 'undefined' && window.location?.protocol === 'https:' && effectiveBase.startsWith('http://')) {
-    try {
-      const u = new URL(effectiveBase)
-      if (u.hostname === window.location.hostname) {
-        effectiveBase = effectiveBase.replace(/^http:\/\//i, 'https://')
-      }
-    } catch {
-    }
-  }
   const p = pathname.startsWith('/') ? pathname : `/${pathname}`
   return `${effectiveBase}${p}`
 }
@@ -118,7 +109,24 @@ export function getWsUrl() {
   if (typeof window !== 'undefined' && window.location?.protocol === 'https:' && effectiveBase.startsWith('http://')) {
     try {
       const u = new URL(effectiveBase)
-      if (u.hostname === window.location.hostname) {
+      const hostOnly = u.hostname.toLowerCase()
+      const isIpv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostOnly)
+      const isPrivateIpv4 = (() => {
+        if (!isIpv4) return false
+        const [a, b] = hostOnly.split('.').map(n => Number(n))
+        if ([a, b].some(n => Number.isNaN(n))) return false
+        if (a === 10) return true
+        if (a === 127) return true
+        if (a === 192 && b === 168) return true
+        if (a === 172 && b >= 16 && b <= 31) return true
+        return false
+      })()
+      const isLanLike =
+        hostOnly === 'localhost' ||
+        hostOnly === '0.0.0.0' ||
+        isPrivateIpv4 ||
+        hostOnly.endsWith('.local')
+      if (!isLanLike && u.hostname === window.location.hostname) {
         effectiveBase = effectiveBase.replace(/^http:\/\//i, 'https://')
       }
     } catch {

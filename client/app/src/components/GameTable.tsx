@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import { api } from '../services/api';
 import Card from './Card';
 import { socket } from '../services/socket';
@@ -31,6 +31,10 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
   const playAreaRef = useRef<HTMLDivElement>(null);
   const myName = localStorage.getItem('playerName') || '我';
   const isLoadingRef = useRef(false);
+  const gameStateRef = useRef<any>(null);
+  const myNameRef = useRef(myName);
+  const refreshTimerRef = useRef<number | null>(null);
+  const lastFetchAtRef = useRef<number>(0);
   const myHandCount = Array.isArray(gameState?.myHand) ? gameState.myHand.length : 0
   const isNarrow = viewportWidth <= 480
   const useTwoRows = isNarrow && myHandCount > 10
@@ -50,6 +54,11 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
   const playedCols = viewportWidth <= 360 ? 4 : viewportWidth <= 480 ? 5 : viewportWidth <= 768 ? 6 : 7
   useEnsureRoomSocket(roomId, playerId)
   const voice = useTRTC(roomId, playerId)
+
+  useEffect(() => {
+    gameStateRef.current = gameState
+    myNameRef.current = myName
+  }, [gameState, myName])
 
   const getRankLabel = (rank: number, suit?: string) => {
     if (suit === 'J') return rank >= 17 ? '大王' : '小王'
@@ -137,14 +146,44 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
   const canBeatTable = !mustFollow ? true : canAnyBeat(gameState?.myHand || [], gameState?.lastMove)
   const cannotBeatTable = mustFollow && !canBeatTable
 
+  const loadGameState = useCallback(async () => {
+    const now = Date.now()
+    if (now - lastFetchAtRef.current < 150) return
+    if (isLoadingRef.current) return
+    isLoadingRef.current = true
+    lastFetchAtRef.current = now
+    try {
+      const res = await api.getGameState(roomId, playerId)
+      if (res.success) {
+        setGameState(res.data)
+        if (res.data?.phase === 'TAKING_HOLE') {
+          setHoleCards(Array.isArray(res.data?.holeCards) ? res.data.holeCards : [])
+        } else {
+          setHoleCards([])
+        }
+      }
+    } catch {
+    } finally {
+      isLoadingRef.current = false
+    }
+  }, [playerId, roomId])
+
+  const requestRefresh = useCallback(() => {
+    if (refreshTimerRef.current !== null) return
+    refreshTimerRef.current = window.setTimeout(() => {
+      refreshTimerRef.current = null
+      loadGameState()
+    }, 50)
+  }, [loadGameState])
+
   useEffect(() => {
     loadGameState();
     
     const onGameUpdate = () => {
-      loadGameState();
+      requestRefresh()
     };
     const onRoomUpdate = () => {
-      loadGameState();
+      requestRefresh()
     };
     const onRoomClosed = () => {
       alert('房间已解散');
@@ -155,36 +194,37 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
     };
     const onHoleTaken = () => {
       setHoleCards([]);
-      loadGameState();
+      requestRefresh()
     };
     const onGameOver = (data: any) => {
       setSettlement({ winnerId: data?.winnerId, winnerSide: data?.winnerSide });
       setSettingMultiplier(null)
-      loadGameState();
+      requestRefresh()
     };
     const onMaxPlay = (data: any) => {
       const pid = data?.playerId;
-      const name = pid === playerId ? myName : '对手';
+      const name = pid === playerId ? myNameRef.current : '对手';
       setToast(`${name}出了最大牌，其他玩家自动跳过，由其继续出牌`);
       window.setTimeout(() => setToast(null), 1800);
-      loadGameState();
+      requestRefresh()
     };
     const onNextRoundReady = () => {
-      loadGameState();
+      requestRefresh()
     };
     const onUndo = (data: any) => {
       const pid = data?.playerId
-      const name = pid === playerId ? myName : '对手'
+      const name = pid === playerId ? myNameRef.current : '对手'
       setToast(`${name}撤销了上一次出牌`)
       window.setTimeout(() => setToast(null), 1600)
-      loadGameState()
+      requestRefresh()
     }
     const onBidMade = (data: any) => {
       const pid = data?.playerId
       const score = data?.score
       const forced = data?.forced
-      const player = gameState?.otherPlayers.find((p: any) => p.id === pid)
-      const name = pid === playerId ? myName : (player?.name || '未知')
+      const gs = gameStateRef.current
+      const player = gs?.otherPlayers?.find((p: any) => p.id === pid)
+      const name = pid === playerId ? myNameRef.current : (player?.name || '未知')
       
       let msg = ''
       if (score === 0) msg = '不叫'
@@ -193,17 +233,21 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
       
       setToast(`${name} ${msg}`)
       window.setTimeout(() => setToast(null), 2000)
-      loadGameState()
+      requestRefresh()
     }
-
-    socket.on('game_update', onGameUpdate);
-    socket.on('game_started', () => {
+    const onGameStarted = () => {
       setSettlement(null);
       setSettingMultiplier(null)
       setSelectedCards([]);
       setHoleCards([]);
-      onGameUpdate();
-    });
+      requestRefresh()
+    }
+    const onWsOpen = () => {
+      requestRefresh()
+    }
+
+    socket.on('game_update', onGameUpdate);
+    socket.on('game_started', onGameStarted);
     socket.on('game_over', onGameOver);
     socket.on('hole_revealed', onHoleRevealed);
     socket.on('hole_taken', onHoleTaken);
@@ -214,18 +258,24 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
     socket.on('room_update', onRoomUpdate);
 
     socket.on('room_closed', onRoomClosed);
+    socket.on('ws_open', onWsOpen);
 
     const pollId = window.setInterval(() => {
       setWsReadyState(socket.getReadyState());
-      if (!socket.isConnected()) {
-        loadGameState();
-      }
-    }, 1500);
+      const now = Date.now()
+      const lastMsg = socket.getLastMessageAt()
+      if (!socket.isConnected()) requestRefresh()
+      else if (lastMsg && now - lastMsg > 2000) requestRefresh()
+    }, 800);
 
     return () => {
         window.clearInterval(pollId);
+        if (refreshTimerRef.current !== null) {
+          window.clearTimeout(refreshTimerRef.current)
+          refreshTimerRef.current = null
+        }
         socket.off('game_update', onGameUpdate);
-        socket.off('game_started');
+        socket.off('game_started', onGameStarted);
         socket.off('game_over', onGameOver);
         socket.off('hole_revealed', onHoleRevealed);
         socket.off('hole_taken', onHoleTaken);
@@ -235,8 +285,9 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
         socket.off('bid_made', onBidMade);
         socket.off('room_update', onRoomUpdate);
         socket.off('room_closed', onRoomClosed);
+        socket.off('ws_open', onWsOpen);
     };
-  }, [roomId, playerId, navigate, gameState]); // Add gameState dependency to access names
+  }, [loadGameState, navigate, playerId, requestRefresh, roomId]);
 
   useEffect(() => {
     const onResize = () => setViewportWidth(window.innerWidth)
@@ -296,21 +347,6 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
     setToast('当前无牌可压，请选择“不出”')
     window.setTimeout(() => setToast(null), 1800)
   }, [cannotBeatTable, gameState?.roomId, gameState?.currentTurn, gameState?.lastMove, noBeatKey, playerId])
-
-  const loadGameState = async () => {
-    if (isLoadingRef.current) return;
-    isLoadingRef.current = true;
-    const res = await api.getGameState(roomId, playerId);
-    if (res.success) {
-      setGameState(res.data);
-      if (res.data?.phase === 'TAKING_HOLE') {
-        setHoleCards(Array.isArray(res.data?.holeCards) ? res.data.holeCards : []);
-      } else {
-        setHoleCards([]);
-      }
-    }
-    isLoadingRef.current = false;
-  };
 
   const toggleCard = (code: string) => {
     setSelectedCards(prev => 
