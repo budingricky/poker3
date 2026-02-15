@@ -8,10 +8,23 @@ export function useTRTC(roomId: string, playerId: string) {
   const [speakingLevels, setSpeakingLevels] = useState<Record<string, number>>({});
   const [micPermission, setMicPermission] = useState<'idle' | 'granted' | 'denied'>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [isJoined, setIsJoined] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'initializing' | 'joined' | 'error'>('idle');
 
   const clientRef = useRef<any>(null);
   const localStreamRef = useRef<any>(null);
   const mountedRef = useRef(true);
+  const initPromiseRef = useRef<Promise<void> | null>(null);
+  const statusRef = useRef(status);
+  const joinedRef = useRef(isJoined);
+
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
+  useEffect(() => {
+    joinedRef.current = isJoined;
+  }, [isJoined]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -34,27 +47,47 @@ export function useTRTC(roomId: string, playerId: string) {
     setRemoteStreams({});
     setSpeakingLevels({});
     setMicEnabled(false);
+    setIsJoined(false);
+    setStatus('idle');
+    setError(null);
   }, []);
 
-  const init = useCallback(async () => {
+  const init = useCallback(async (force?: boolean) => {
     if (!roomId || !playerId) return;
 
-    try {
+    if (!force && (statusRef.current === 'initializing' || statusRef.current === 'joined')) return;
+    if (initPromiseRef.current) return initPromiseRef.current;
+
+    const p = (async () => {
+      if (mountedRef.current) {
+        setStatus('initializing');
+        setError(null);
+      }
+
+      if (force && clientRef.current) {
+        try {
+          await clientRef.current.leave();
+        } catch (e) {}
+        clientRef.current = null;
+        if (mountedRef.current) setIsJoined(false);
+      }
+
       const sigRes = await api.getTRTCSig(playerId);
       if (!sigRes.success) {
-        // Silent fail or log?
-        console.warn('TRTC Sig failed:', sigRes.error);
+        const msg = '获取语音签名失败: ' + (sigRes.error || '未知错误');
+        if (mountedRef.current) {
+          setError(msg);
+          setStatus('error');
+        }
         return;
       }
       const { userSig, sdkAppId } = sigRes.data;
 
-      // Hash roomId to integer to ensure compatibility
       let finalRoomId: number;
       const parsed = parseInt(roomId);
       if (!isNaN(parsed) && parsed.toString() === roomId && parsed < 4294967295) {
           finalRoomId = parsed;
       } else {
-          // Simple hash
           let hash = 0;
           for (let i = 0; i < roomId.length; i++) {
             hash = ((hash << 5) - hash) + roomId.charCodeAt(i);
@@ -96,22 +129,36 @@ export function useTRTC(roomId: string, playerId: string) {
       client.on('audio-volume', (event: any) => {
         const levels: Record<string, number> = {};
         event.result.forEach((item: any) => {
-            levels[item.userId] = item.audioVolume / 100; // 0-100 -> 0-1
+            levels[item.userId] = item.audioVolume / 100;
         });
         setSpeakingLevels(levels);
       });
       
       client.enableAudioVolumeEvaluation(200);
 
+      if (joinedRef.current) return;
       await client.join({ roomId: finalRoomId });
-
-    } catch (e: any) {
-      console.error('TRTC Init failed', e);
       if (mountedRef.current) {
-        setError(e.message);
-        setMicPermission('denied');
+        setIsJoined(true);
+        setStatus('joined');
+        setError(null);
       }
-    }
+    })()
+      .catch((e: any) => {
+        if (mountedRef.current) {
+          setError(e?.message || '语音连接失败');
+          setStatus('error');
+          if (e?.name === 'NotAllowedError' || e?.name === 'PermissionDeniedError') {
+            setMicPermission('denied');
+          }
+        }
+      })
+      .finally(() => {
+        initPromiseRef.current = null;
+      });
+
+    initPromiseRef.current = p;
+    return p;
   }, [roomId, playerId]);
 
   useEffect(() => {
@@ -121,11 +168,23 @@ export function useTRTC(roomId: string, playerId: string) {
     };
   }, [init, leave]);
 
+  useEffect(() => {
+    const eventName = micEnabled ? 'trtc-mic-enabled' : 'trtc-mic-disabled';
+    window.dispatchEvent(new CustomEvent(eventName));
+  }, [micEnabled]);
+
   const toggleMic = useCallback(async () => {
-    if (!clientRef.current) return;
-    
+    if (!clientRef.current || !isJoined) {
+      if (statusRef.current === 'initializing') return;
+      if (statusRef.current === 'error') {
+        await init(true);
+      } else {
+        await init();
+      }
+      return;
+    }
+
     if (micEnabled) {
-        // Turn off
         if (localStreamRef.current) {
             localStreamRef.current.close();
             localStreamRef.current = null;
@@ -135,7 +194,6 @@ export function useTRTC(roomId: string, playerId: string) {
         }
         setMicEnabled(false);
     } else {
-        // Turn on
         try {
             const localStream = TRTC.createStream({ userId: playerId, audio: true, video: false });
             await localStream.initialize();
@@ -145,11 +203,16 @@ export function useTRTC(roomId: string, playerId: string) {
             setMicPermission('granted');
         } catch (e: any) {
             console.error('Mic failed', e);
-            setMicPermission('denied');
+            if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+                 setMicPermission('denied');
+            } else {
+                 setMicEnabled(false);
+                 setError(e.message);
+            }
             alert('无法访问麦克风: ' + e.message);
         }
     }
-  }, [micEnabled, playerId]);
+  }, [init, isJoined, micEnabled, playerId]);
 
   return {
     micEnabled,
@@ -157,6 +220,7 @@ export function useTRTC(roomId: string, playerId: string) {
     micPermission,
     remoteStreams,
     speakingLevels,
-    error
+    error,
+    status
   };
 }

@@ -54,6 +54,12 @@ async function discoverViaHttpScan({
   const ports = [3001, 8080]
 
   for (const scheme of schemes) candidates.push(`${scheme}://localhost:3001`)
+  
+  // Add current origin (for proxy support)
+  if (window.location.port) {
+      candidates.push(window.location.origin)
+  }
+
   try {
     const host = window.location.hostname
     if (host && /^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {

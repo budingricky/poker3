@@ -136,7 +136,8 @@ class GameService {
       diggerId: null,
       biddingStarterId,
       passCount: 0,
-      lastMove: null
+      lastMove: null,
+      surrenderChoices: {}
     };
 
     this.games.set(roomId, gameState);
@@ -281,6 +282,7 @@ class GameService {
       game.phase = 'SURRENDER';
       game.passCount = 0;
       game.lastMove = null;
+      game.surrenderChoices = {};
       // In SURRENDER phase, currentTurn is usually irrelevant for action, but we can keep it as digger.
       game.currentTurn = game.diggerId;
 
@@ -294,34 +296,10 @@ class GameService {
       if (!game) throw new Error('Game not found')
       if (game.phase !== 'SURRENDER') throw new Error('Not in surrender phase')
       
-      // Determine winner based on who surrendered
-      // If Digger surrendered -> Winner is Others (pick first non-digger as representative ID, or handled by side)
-      // If Peasant surrendered -> Winner is Digger
-      const isDigger = game.diggerId === playerId
-      const winnerSide = isDigger ? 'OTHERS' : 'DIGGER'
-      let winnerId = ''
+      if (!game.surrenderChoices) game.surrenderChoices = {}
+      game.surrenderChoices[playerId] = 'SURRENDER'
       
-      if (winnerSide === 'DIGGER') {
-          winnerId = game.diggerId!
-      } else {
-          // If Others win, we need a winnerId for the record. 
-          // Usually we pick one peasant.
-          const room = roomService.getRoom(roomId)
-          if (room) {
-              const peasant = room.players.find(p => p.id !== game.diggerId)
-              if (peasant) winnerId = peasant.id
-          }
-      }
-
-      // Calculate adjusted score for surrender (4->3, 3->2, 2->2, 1->1)
-      let adjustedScore = game.bidScore
-      if (game.bidScore === 4) adjustedScore = 3
-      else if (game.bidScore === 3) adjustedScore = 2
-      else if (game.bidScore === 2) adjustedScore = 2
-      else if (game.bidScore === 1) adjustedScore = 1
-
-      // Immediate game over with adjusted score
-      this.processGameOver(roomId, winnerId, winnerSide, adjustedScore)
+      this.checkSurrenderPhaseEnd(roomId)
   }
 
   confirmContinue(roomId: string, playerId: string) {
@@ -329,8 +307,61 @@ class GameService {
       if (!game) throw new Error('Game not found')
       if (game.phase !== 'SURRENDER') throw new Error('Not in surrender phase')
 
-      // Only Digger can proceed to playing phase
-      if (playerId === game.diggerId) {
+      if (!game.surrenderChoices) game.surrenderChoices = {}
+      game.surrenderChoices[playerId] = 'CONTINUE'
+      
+      this.checkSurrenderPhaseEnd(roomId)
+  }
+
+  private checkSurrenderPhaseEnd(roomId: string) {
+      const game = this.games.get(roomId)
+      if (!game) return
+      const room = roomService.getRoom(roomId)
+      if (!room) return
+      
+      const allPlayers = room.players
+      const choices = game.surrenderChoices || {}
+      
+      // Check if all active players have chosen
+      // (Assuming all players in room are active/playing)
+      const allChosen = allPlayers.every(p => choices[p.id])
+      
+      if (!allChosen) {
+          // Just broadcast update so clients know who has chosen
+          socketService.broadcast(roomId, 'game_update')
+          return
+      }
+      
+      // All chosen, decide outcome
+      const anySurrender = Object.values(choices).includes('SURRENDER')
+      
+      if (anySurrender) {
+          // Someone surrendered.
+          // Priority: Digger surrender > Others surrender
+          const diggerSurrendered = choices[game.diggerId!] === 'SURRENDER'
+          
+          let winnerSide: 'DIGGER' | 'OTHERS'
+          let winnerId = ''
+          
+          if (diggerSurrendered) {
+              winnerSide = 'OTHERS'
+              // Pick a winnerId from others
+              winnerId = allPlayers.find(p => p.id !== game.diggerId)?.id || ''
+          } else {
+              winnerSide = 'DIGGER'
+              winnerId = game.diggerId!
+          }
+
+          // Calculate adjusted score for surrender (4->3, 3->2, 2->2, 1->1)
+          let adjustedScore = game.bidScore
+          if (game.bidScore === 4) adjustedScore = 3
+          else if (game.bidScore === 3) adjustedScore = 2
+          else if (game.bidScore === 2) adjustedScore = 2
+          else if (game.bidScore === 1) adjustedScore = 1
+
+          this.processGameOver(roomId, winnerId, winnerSide, adjustedScore)
+      } else {
+          // All continued
           game.phase = 'PLAYING'
           game.currentTurn = this.findHeart4Owner(game)
           socketService.broadcast(roomId, 'game_update')
@@ -634,6 +665,7 @@ class GameService {
       settlementMultiplier: this.settlementMultiplierByRoom.get(roomId) ?? null,
       settlementMultiplierPending: this.pendingSettlementByRoom.has(roomId) && (this.settlementMultiplierByRoom.get(roomId) ?? null) === null,
       initialHoleCards: game.initialHoleCards || [], // Use the stored initialHoleCards
+      surrenderChoices: game.surrenderChoices || {},
       holeCards: game.phase === 'TAKING_HOLE' ? game.deck : [],
       nextRoundReady: room?.status === RoomStatus.FINISHED ? Array.from(this.nextRoundReadyByRoom.get(roomId) || []) : [],
       settlementHistory: this.settlementHistoryByRoom.get(roomId) || [],
@@ -835,6 +867,24 @@ class GameService {
       if (!room || room.status !== RoomStatus.PLAYING) return
       if (game.phase === 'FINISHED') return
 
+      // Special handling for SURRENDER phase: All bots need to act, not just currentTurn
+      if (game.phase === 'SURRENDER') {
+          const bots = room.players.filter(p => p.isBot)
+          for (const bot of bots) {
+              // If bot hasn't chosen yet
+              if (!game.surrenderChoices?.[bot.id]) {
+                  // Add small delay to avoid instant response
+                  await new Promise(r => setTimeout(r, 1000 + Math.random() * 1000))
+                  // Double check phase didn't change during delay
+                  if (game.phase !== 'SURRENDER') return
+                  
+                  // AI logic: Always continue for now
+                  this.confirmContinue(roomId, bot.id)
+              }
+          }
+          return
+      }
+
       const currentPlayerId = game.currentTurn
       const currentPlayer = room.players.find(p => p.id === currentPlayerId)
       if (!currentPlayer || !currentPlayer.isBot) return
@@ -850,10 +900,6 @@ class GameService {
               await new Promise(r => setTimeout(r, 1000))
               this.takeHoleCards(roomId, currentPlayerId)
           }
-      } else if (game.phase === 'SURRENDER') {
-          // AI always continues
-          await new Promise(r => setTimeout(r, 1000))
-          this.confirmContinue(roomId, currentPlayerId)
       } else if (game.phase === 'PLAYING') {
           const playerIds = room.players.map(p => p.id)
           // This is now async and takes ~2000ms

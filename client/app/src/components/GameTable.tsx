@@ -486,25 +486,27 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
 
       {/* Top Info */}
       <div className="flex justify-between p-4 z-10 text-white/90 text-sm md:text-base shadow-sm bg-black/10 backdrop-blur-sm relative">
-        <div>
-            <div className="font-bold text-lg text-yellow-100 drop-shadow-md">
-                阶段：
-                <span className="text-white">
-                  {gameState.phase === 'BIDDING'
-                    ? '叫分'
-                    : gameState.phase === 'TAKING_HOLE'
-                      ? '收底牌'
-                      : gameState.phase === 'FINISHED'
-                        ? '结算'
-                        : '出牌'}
-                </span>
-            </div>
-            {gameState.diggerId && (
-                <div className="flex items-center gap-1 text-yellow-400">
-                    <span>👑 坑主:</span>
-                    <span>{gameState.otherPlayers.find((p:any) => p.id === gameState.diggerId)?.name || (gameState.diggerId === playerId ? myName : '未知')}</span>
+        <div className="flex items-center gap-4">
+            <div>
+                <div className="font-bold text-lg text-yellow-100 drop-shadow-md">
+                    阶段：
+                    <span className="text-white">
+                      {gameState.phase === 'BIDDING'
+                        ? '叫分'
+                        : gameState.phase === 'TAKING_HOLE'
+                          ? '收底牌'
+                          : gameState.phase === 'FINISHED'
+                            ? '结算'
+                            : '出牌'}
+                    </span>
                 </div>
-            )}
+                {gameState.diggerId && (
+                    <div className="flex items-center gap-1 text-yellow-400">
+                        <span>👑 坑主:</span>
+                        <span>{gameState.otherPlayers.find((p:any) => p.id === gameState.diggerId)?.name || (gameState.diggerId === playerId ? myName : '未知')}</span>
+                    </div>
+                )}
+            </div>
         </div>
 
         {/* Persistent Hole Cards (Top Left) */}
@@ -519,38 +521,38 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
             </div>
         )}
 
-        <div className="text-right">
-            <div className="mb-2 flex justify-end">
-                <VoicePanel
-                    voice={voice}
-                    players={gameState ? [
-                        { id: playerId, name: myName },
-                        ...gameState.otherPlayers.map((p:any) => ({ id: p.id, name: p.name }))
-                    ] : []}
-                    selfId={playerId}
-                />
-            </div>
-            <div className="text-[11px] text-white/70 mb-1">
-              WS: {wsReadyState === 1 ? '已连接' : '重连中'}
-            </div>
-            {gameState.hostId === playerId && (
-                <button 
-                    type="button"
-                    onClick={handleCloseRoom}
-                    className="mb-1 text-xs bg-red-600/80 hover:bg-red-700 text-white px-2 py-1 rounded"
-                >
-                    解散房间
-                </button>
-            )}
-            <div>底分: <span className="font-mono text-yellow-300">{gameState.bidScore}</span></div>
-            <div className="font-bold flex items-center gap-2">
-                {gameState.currentTurn === playerId ? (
-                    <span className="text-green-300 animate-pulse">👉 你的回合</span>
-                ) : (
-                    <span className="text-gray-300">
-                        等待 {gameState.otherPlayers.find((p:any) => p.id === gameState.currentTurn)?.name || (gameState.currentTurn === playerId ? myName : '他人')}...
-                    </span>
+        <div className="flex items-start gap-4">
+            <VoicePanel
+                voice={voice}
+                players={gameState ? [
+                    { id: playerId, name: myName },
+                    ...gameState.otherPlayers.map((p:any) => ({ id: p.id, name: p.name }))
+                ] : []}
+                selfId={playerId}
+            />
+            <div className="text-right">
+                <div className="text-[11px] text-white/70 mb-1">
+                  WS: {wsReadyState === 1 ? '已连接' : '重连中'}
+                </div>
+                {gameState.hostId === playerId && (
+                    <button 
+                        type="button"
+                        onClick={handleCloseRoom}
+                        className="mb-1 text-xs bg-red-600/80 hover:bg-red-700 text-white px-2 py-1 rounded"
+                    >
+                        解散房间
+                    </button>
                 )}
+                <div>底分: <span className="font-mono text-yellow-300">{gameState.bidScore}</span></div>
+                <div className="font-bold flex items-center gap-2">
+                    {gameState.currentTurn === playerId ? (
+                        <span className="text-green-300 animate-pulse">👉 你的回合</span>
+                    ) : (
+                        <span className="text-gray-300">
+                            等待 {gameState.otherPlayers.find((p:any) => p.id === gameState.currentTurn)?.name || (gameState.currentTurn === playerId ? myName : '他人')}...
+                        </span>
+                    )}
+                </div>
             </div>
         </div>
       </div>
@@ -571,46 +573,60 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
                 </div>
             )}
             
-            <div className="flex gap-12 pointer-events-auto">
-              <button
-                disabled={isActing}
-                onClick={async () => {
-                  if (isActing) return
-                  setIsActing(true)
-                  try {
-                    await api.surrender(roomId, playerId)
-                  } catch (e) {
-                    alert('操作失败')
-                  } finally {
-                    setIsActing(false)
-                  }
-                }}
-                className="flex flex-col items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-red-500 to-red-700 hover:from-red-400 hover:to-red-600 text-white shadow-xl active:scale-95 transition-all border-2 border-white/20 group hover:scale-105 disabled:opacity-50 disabled:grayscale"
-              >
-                <span className="text-2xl mb-0.5 group-hover:scale-110 transition-transform">🏳️</span>
-                <span className="font-bold text-sm">弃牌</span>
-              </button>
-              
-              <button
-                disabled={isActing}
-                onClick={async () => {
-                  if (isActing) return
-                  setIsActing(true)
-                  try {
-                    await api.confirmContinue(roomId, playerId)
-                    await loadGameState()
-                  } catch (e) {
-                    alert('操作失败')
-                  } finally {
-                    setIsActing(false)
-                  }
-                }}
-                className="flex flex-col items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-green-500 to-green-700 hover:from-green-400 hover:to-green-600 text-white shadow-xl active:scale-95 transition-all border-2 border-white/20 group hover:scale-105 disabled:opacity-50 disabled:grayscale"
-              >
-                <span className="text-2xl mb-0.5 group-hover:scale-110 transition-transform">⚔️</span>
-                <span className="font-bold text-sm">继续</span>
-              </button>
-            </div>
+            {gameState.surrenderChoices?.[playerId] ? (
+                <div className="flex flex-col items-center justify-center p-8 bg-black/40 rounded-3xl backdrop-blur-md border border-white/10 pointer-events-auto">
+                    <div className="text-3xl mb-4 animate-bounce">⏳</div>
+                    <div className="text-white text-lg font-bold mb-2">等待其他玩家选择...</div>
+                    <div className={`text-sm px-4 py-1 rounded-full font-bold ${
+                        gameState.surrenderChoices[playerId] === 'SURRENDER' 
+                            ? 'bg-red-500/50 text-red-100' 
+                            : 'bg-green-500/50 text-green-100'
+                    }`}>
+                        {gameState.surrenderChoices[playerId] === 'SURRENDER' ? '您已选择弃牌' : '您已选择继续'}
+                    </div>
+                </div>
+            ) : (
+                <div className="flex gap-12 pointer-events-auto">
+                  <button
+                    disabled={isActing}
+                    onClick={async () => {
+                      if (isActing) return
+                      setIsActing(true)
+                      try {
+                        await api.surrender(roomId, playerId)
+                      } catch (e) {
+                        alert('操作失败')
+                      } finally {
+                        setIsActing(false)
+                      }
+                    }}
+                    className="flex flex-col items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-red-500 to-red-700 hover:from-red-400 hover:to-red-600 text-white shadow-xl active:scale-95 transition-all border-2 border-white/20 group hover:scale-105 disabled:opacity-50 disabled:grayscale"
+                  >
+                    <span className="text-2xl mb-0.5 group-hover:scale-110 transition-transform">🏳️</span>
+                    <span className="font-bold text-sm">弃牌</span>
+                  </button>
+                  
+                  <button
+                    disabled={isActing}
+                    onClick={async () => {
+                      if (isActing) return
+                      setIsActing(true)
+                      try {
+                        await api.confirmContinue(roomId, playerId)
+                        await loadGameState()
+                      } catch (e) {
+                        alert('操作失败')
+                      } finally {
+                        setIsActing(false)
+                      }
+                    }}
+                    className="flex flex-col items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-green-500 to-green-700 hover:from-green-400 hover:to-green-600 text-white shadow-xl active:scale-95 transition-all border-2 border-white/20 group hover:scale-105 disabled:opacity-50 disabled:grayscale"
+                  >
+                    <span className="text-2xl mb-0.5 group-hover:scale-110 transition-transform">⚔️</span>
+                    <span className="font-bold text-sm">继续</span>
+                  </button>
+                </div>
+            )}
 
             <div className="text-white/80 text-sm font-bold bg-black/30 px-4 py-1 rounded-full backdrop-blur-sm">
               {gameState.diggerId === playerId ? '庄家抉择' : '闲家抉择'}

@@ -48,6 +48,7 @@ class SocketClient {
     } catch {
       return
     }
+    if (!url) return
 
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       if (this.currentUrl === url) return
@@ -62,7 +63,20 @@ class SocketClient {
       this.reconnectTimer = null
     }
 
-    this.ws = new WebSocket(url)
+    try {
+      this.ws = new WebSocket(url)
+    } catch {
+      this.ws = null
+      if (!this.manualClose) {
+        const delay = Math.min(3000, 250 * Math.max(1, this.reconnectAttempts))
+        this.reconnectAttempts += 1
+        this.reconnectTimer = window.setTimeout(() => {
+          this.reconnectTimer = null
+          this.connect()
+        }, delay)
+      }
+      return
+    }
     const connectTimer = window.setTimeout(() => {
       try {
         if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {

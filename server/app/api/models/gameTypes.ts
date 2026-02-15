@@ -50,4 +50,5 @@ export interface GameState {
     pattern: HandPattern;
   } | null;
   initialHoleCards?: Card[];
+  surrenderChoices?: { [playerId: string]: 'SURRENDER' | 'CONTINUE' };
 }

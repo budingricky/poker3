@@ -572,18 +572,9 @@ export class OfflineEngine {
     this.passCount = 0
 
     if (this.playersHand[playerId].length === 0) {
-      this.phase = 'ENDING'
-      this.currentTurn = '' // Block moves
       this.undo = null
       this.setAction({ type: 'play', playerId, isMax: false })
-      
-      // Delay finishing
-      setTimeout(() => {
-          // Double check if not already finished (avoid race conditions)
-          if (this.roomStatus !== 'FINISHED') {
-              this.finishGame(playerId)
-          }
-      }, 3000)
+      this.finishGame(playerId)
       return
     }
 

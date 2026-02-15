@@ -60,14 +60,45 @@ export function subscribeServerBaseUrl(cb: Listener) {
 }
 
 export function getApiUrl(pathname: string) {
+  if (import.meta.env.DEV) {
+    const p = pathname.startsWith('/') ? pathname : `/${pathname}`
+    return p
+  }
   const base = getEffectiveBaseUrl(getServerBaseUrl())
   if (!base) throw new Error('未设置服务端地址')
+  let effectiveBase = base
+  if (typeof window !== 'undefined' && window.location?.protocol === 'https:' && effectiveBase.startsWith('http://')) {
+    try {
+      const u = new URL(effectiveBase)
+      if (u.hostname === window.location.hostname) {
+        effectiveBase = effectiveBase.replace(/^http:\/\//i, 'https://')
+      }
+    } catch {
+    }
+  }
   const p = pathname.startsWith('/') ? pathname : `/${pathname}`
-  return `${base}${p}`
+  return `${effectiveBase}${p}`
 }
 
 export function getWsUrl() {
+  if (import.meta.env.DEV) {
+    if (typeof window === 'undefined') return ''
+    const protocol = window.location?.protocol === 'https:' ? 'wss' : 'ws'
+    const host = window.location?.host || ''
+    if (!host) return ''
+    return `${protocol}://${host}/ws`
+  }
   const base = getEffectiveBaseUrl(getServerBaseUrl())
   if (!base) throw new Error('未设置服务端地址')
-  return base.replace(/^http/i, 'ws') + '/ws'
+  let effectiveBase = base
+  if (typeof window !== 'undefined' && window.location?.protocol === 'https:' && effectiveBase.startsWith('http://')) {
+    try {
+      const u = new URL(effectiveBase)
+      if (u.hostname === window.location.hostname) {
+        effectiveBase = effectiveBase.replace(/^http:\/\//i, 'https://')
+      }
+    } catch {
+    }
+  }
+  return effectiveBase.replace(/^http/i, 'ws') + '/ws'
 }

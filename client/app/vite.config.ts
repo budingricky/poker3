@@ -22,6 +22,19 @@ export default defineConfig(({ command }) => {
       port: 5173,
       strictPort: true,
       https,
+      proxy: {
+        '/api': {
+          target: 'https://localhost:3001',
+          secure: false,
+          changeOrigin: true,
+        },
+        '/ws': {
+          target: 'https://localhost:3001',
+          secure: false,
+          ws: true,
+          changeOrigin: true,
+        },
+      },
       watch: {
         ignored: ['**/ios/**', '**/android/**'],
       },
