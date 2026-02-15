@@ -211,7 +211,8 @@ export default function ServerSelect({ mode }: { mode: Mode }) {
 
       await runStep('ws', 1200, async () => {
         // 5s timeout, 3 retries = up to 15s+ total
-        await checkWs(info.wsUrl, 5000, 3)
+        const derivedWsUrl = baseUrl.replace(/^http/i, 'ws') + '/ws'
+        await checkWs(derivedWsUrl, 5000, 3)
       })
       activateNext('ws', 'api_room')
 

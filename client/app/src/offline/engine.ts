@@ -882,20 +882,12 @@ export class OfflineEngine {
   private isCurrentMoveMax(playerId: string) {
     const lastMove = this.lastMove
     if (!lastMove || lastMove.playerId !== playerId) return false
-    
-    const p = lastMove.pattern
-    // 3 is rank 3 but has compare value 13 (max for single/pair/triplet/quad)
-    if (p.type === 'SINGLE') return p.rank === 3
-    if (p.type === 'PAIR') return p.rank === 3
-    if (p.type === 'TRIPLET') return p.rank === 3
-    if (p.type === 'QUAD') return p.rank === 3
-    
-    // Straights max out at K (rank 13)
-    if (p.type === 'STRAIGHT') return p.rank === 13
-    if (p.type === 'CONSECUTIVE_PAIRS') return p.rank === 13
-    if (p.type === 'CONSECUTIVE_TRIPLETS') return p.rank === 13
-    
-    return false
+    for (const p of this.players) {
+      if (p.id === playerId) continue
+      const hand = this.playersHand[p.id] || []
+      if (this.canAnyBeat(hand, lastMove)) return false
+    }
+    return true
   }
 
   private chooseBid(playerId: string) {

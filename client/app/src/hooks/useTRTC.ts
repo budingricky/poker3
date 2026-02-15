@@ -195,6 +195,13 @@ export function useTRTC(roomId: string, playerId: string) {
         setMicEnabled(false);
     } else {
         try {
+            const hasGum = !!(navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function')
+            if (!hasGum) {
+                setMicPermission('denied')
+                setMicEnabled(false)
+                setError('当前环境不支持麦克风访问')
+                return
+            }
             const localStream = TRTC.createStream({ userId: playerId, audio: true, video: false });
             await localStream.initialize();
             localStreamRef.current = localStream;
@@ -207,9 +214,20 @@ export function useTRTC(roomId: string, playerId: string) {
                  setMicPermission('denied');
             } else {
                  setMicEnabled(false);
-                 setError(e.message);
+                 const msg = String(e?.message || '')
+                 if (msg.includes('getTracks')) {
+                   setMicPermission('denied')
+                   setError('无法访问麦克风（当前 iOS/Android WebView 可能不支持该语音模式）')
+                 } else {
+                   setError(e?.message || '无法访问麦克风')
+                 }
             }
-            alert('无法访问麦克风: ' + e.message);
+            if (localStreamRef.current) {
+              try {
+                localStreamRef.current.close()
+              } catch {}
+              localStreamRef.current = null
+            }
         }
     }
   }, [init, isJoined, micEnabled, playerId]);

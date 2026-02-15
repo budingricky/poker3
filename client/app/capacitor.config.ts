@@ -5,9 +5,10 @@ const config: CapacitorConfig = {
   appName: 'Poker3',
   webDir: 'dist',
   server: {
-    androidScheme: 'https'
+    androidScheme: 'https',
+    iosScheme: 'https',
+    hostname: 'localhost',
   },
 }
 
 export default config
-

@@ -55,9 +55,9 @@ async function discoverViaHttpScan({
 
   for (const scheme of schemes) candidates.push(`${scheme}://localhost:3001`)
   
-  // Add current origin (for proxy support)
-  if (window.location.port) {
-      candidates.push(window.location.origin)
+  // Add current origin (for proxy support) if it's http(s)
+  if (window.location.port && /^https?:\/\//i.test(window.location.origin)) {
+    candidates.push(window.location.origin)
   }
 
   try {
@@ -116,8 +116,8 @@ async function discoverViaHttpScan({
     }
   }
 
-  // Increased concurrency to 48 for faster scanning
-  await Promise.all(Array.from({ length: 48 }, () => worker()))
+  const concurrency = Math.max(1, Math.min(48, Math.floor(maxConcurrency)))
+  await Promise.all(Array.from({ length: concurrency }, () => worker()))
   return uniqServers(results)
 }
 
