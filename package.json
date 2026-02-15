@@ -12,7 +12,14 @@
     "client:dev": "npm --workspace client/app run dev --",
     "client:build": "npm --workspace client/app run build",
     "build": "vite build",
-    "client:check": "npm --workspace client/app run check"
+    "client:check": "npm --workspace client/app run check",
+    "pm2:start": "pm2 start ecosystem.config.cjs",
+    "pm2:stop": "pm2 stop poker3-server",
+    "pm2:restart": "pm2 restart poker3-server",
+    "pm2:delete": "pm2 delete poker3-server",
+    "pm2:logs": "pm2 logs poker3-server",
+    "pm2:status": "pm2 status",
+    "pm2:save": "pm2 save"
   },
   "devDependencies": {
     "esbuild": "0.27.0"
