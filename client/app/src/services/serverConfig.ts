@@ -1,5 +1,5 @@
 const STORAGE_KEY = 'poker3.serverBaseUrl'
-const DEFAULT_SERVER_URL = 'https://api.poker.bd1bmc.xyz'
+const DEFAULT_SERVER_URL = 'https://39.105.107.234:3001'
 
 type Listener = (baseUrl: string) => void
 

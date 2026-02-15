@@ -108,6 +108,7 @@ export default function ServerSelect({ mode }: { mode: Mode }) {
 
   const onlineServers = useMemo(() => {
     return [
+      { name: '中国北京节点', httpUrl: normalizeBaseUrl('https://39.105.107.234:3001') },
       { name: '中国香港节点', httpUrl: normalizeBaseUrl('https://api.poker.bd1bmc.xyz') },
     ]
   }, [])
@@ -135,7 +136,7 @@ export default function ServerSelect({ mode }: { mode: Mode }) {
   }, [mode])
 
   const title = mode === 'online' ? '选择服务器' : '选择局域网服务器'
-  const subtitle = mode === 'online' ? '当前仅提供一个官方节点。' : '自动发现同一局域网内的 Poker3 服务端。'
+  const subtitle = mode === 'online' ? '选择您最近的节点以获得最佳体验。' : '自动发现同一局域网内的 Poker3 服务端。'
 
   const runConnectFlow = async (params: { baseUrl: string; displayName: string }) => {
     if (busyRef.current) return
