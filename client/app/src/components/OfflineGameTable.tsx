@@ -617,10 +617,10 @@ export default function OfflineGameTable({ engine, aiMode, deepseekApiKey, onExi
            if (total === 3) {
                if (i === 0) posClass = 'right-1 top-1/2 -translate-y-1/2 flex-col scale-90 origin-right'; // Right
                if (i === 1) posClass = 'top-14 left-1/2 -translate-x-1/2 flex-row scale-90 origin-top'; // Top
-               if (i === 2) posClass = 'left-1 top-1/2 -translate-y-1/2 flex-col scale-90 origin-left'; // Left
+               if (i === 2) posClass = 'left-12 top-1/2 -translate-y-1/2 flex-col scale-90 origin-left'; // Left
            } else if (total === 2) {
                if (i === 0) posClass = 'right-1 top-1/2 -translate-y-1/2 flex-col scale-90 origin-right';
-               if (i === 1) posClass = 'left-1 top-1/2 -translate-y-1/2 flex-col scale-90 origin-left';
+               if (i === 1) posClass = 'left-12 top-1/2 -translate-y-1/2 flex-col scale-90 origin-left';
            } else if (total === 1) {
                posClass = 'top-14 left-1/2 -translate-x-1/2 flex-row scale-90 origin-top';
            }
@@ -657,7 +657,8 @@ export default function OfflineGameTable({ engine, aiMode, deepseekApiKey, onExi
         })}
       </div>
 
-      <div ref={playAreaRef} className="flex-grow flex flex-col items-center justify-center relative z-0 pb-[320px] md:pb-[280px]">
+      {/* Center Table / Last Move / Hole Cards */}
+      <div ref={playAreaRef} className="flex-grow flex flex-col items-center justify-center relative z-0 pb-[320px] md:pb-[280px] px-12">
         <AnimatePresence>
           {toast && (
             <motion.div

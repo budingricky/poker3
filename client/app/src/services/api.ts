@@ -126,4 +126,11 @@ export const api = {
       body: JSON.stringify({ roomId, playerId }),
     })
   },
+  getTRTCSig: async (userId: string) => {
+    return fetchJson('/api/auth/trtc_sig', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId }),
+    })
+  },
 }

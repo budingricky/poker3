@@ -5,6 +5,8 @@ import { socket } from '../services/socket';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useEnsureRoomSocket } from '../hooks/useEnsureRoomSocket'
+import { useTRTC } from '../hooks/useTRTC';
+import VoicePanel from './VoicePanel';
 
 interface GameTableProps {
   roomId: string;
@@ -47,6 +49,8 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
     : 'w-[clamp(20px,3.2vw,34px)] h-[clamp(28px,4.6vw,46px)]'
   const playedCols = viewportWidth <= 360 ? 4 : viewportWidth <= 480 ? 5 : viewportWidth <= 768 ? 6 : 7
   useEnsureRoomSocket(roomId, playerId)
+  const voice = useTRTC(roomId, playerId)
+
   const getRankLabel = (rank: number, suit?: string) => {
     if (suit === 'J') return rank >= 17 ? '大王' : '小王'
     if (rank === 11) return 'J'
@@ -516,6 +520,16 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
         )}
 
         <div className="text-right">
+            <div className="mb-2 flex justify-end">
+                <VoicePanel
+                    voice={voice}
+                    players={gameState ? [
+                        { id: playerId, name: myName },
+                        ...gameState.otherPlayers.map((p:any) => ({ id: p.id, name: p.name }))
+                    ] : []}
+                    selfId={playerId}
+                />
+            </div>
             <div className="text-[11px] text-white/70 mb-1">
               WS: {wsReadyState === 1 ? '已连接' : '重连中'}
             </div>
@@ -613,10 +627,10 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
            if (total === 3) {
                if (i === 0) posClass = 'right-1 top-1/2 -translate-y-1/2 flex-col scale-90 origin-right'; // Right
                if (i === 1) posClass = 'top-14 left-1/2 -translate-x-1/2 flex-row scale-90 origin-top'; // Top
-               if (i === 2) posClass = 'left-1 top-1/2 -translate-y-1/2 flex-col scale-90 origin-left'; // Left
+               if (i === 2) posClass = 'left-12 top-1/2 -translate-y-1/2 flex-col scale-90 origin-left'; // Left
            } else if (total === 2) {
                if (i === 0) posClass = 'right-1 top-1/2 -translate-y-1/2 flex-col scale-90 origin-right';
-               if (i === 1) posClass = 'left-1 top-1/2 -translate-y-1/2 flex-col scale-90 origin-left';
+               if (i === 1) posClass = 'left-12 top-1/2 -translate-y-1/2 flex-col scale-90 origin-left';
            } else if (total === 1) {
                posClass = 'top-14 left-1/2 -translate-x-1/2 flex-row scale-90 origin-top';
            }
@@ -644,7 +658,7 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
       </div>
 
       {/* Center Table / Last Move / Hole Cards */}
-      <div ref={playAreaRef} className="flex-grow flex flex-col items-center justify-center relative z-0 pb-[320px] md:pb-[280px]">
+      <div ref={playAreaRef} className="flex-grow flex flex-col items-center justify-center relative z-0 pb-[320px] md:pb-[280px] px-12">
         <AnimatePresence>
           {toast && (
             <motion.div
