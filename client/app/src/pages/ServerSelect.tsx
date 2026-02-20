@@ -90,12 +90,8 @@ async function fetchServerInfo(baseUrl: string, timeoutMs: number, isBeijing: bo
     const wsPath = String(data?.wsPath || '/ws').trim()
     let wsUrl: string
     
-    if (isDev && isBeijing) {
-      wsUrl = `ws://${window.location.host}/beijing/ws`
-    } else {
-      wsUrl = baseUrl.replace(/^http/i, 'ws').replace(/\/+$/, '') + (wsPath.startsWith('/') ? wsPath : '/' + wsPath)
-      if (baseUrl.startsWith('https://')) wsUrl = wsUrl.replace(/^ws:\/\//i, 'wss://')
-    }
+    wsUrl = baseUrl.replace(/^http/i, 'ws').replace(/\/+$/, '') + (wsPath.startsWith('/') ? wsPath : '/' + wsPath)
+    if (baseUrl.startsWith('https://')) wsUrl = wsUrl.replace(/^ws:\/\//i, 'wss://')
     
     console.log('WebSocket URL:', wsUrl)
     return { wsUrl }
@@ -155,7 +151,7 @@ export default function ServerSelect({ mode }: { mode: Mode }) {
   const onlineServers = useMemo(() => {
     return [
       { name: '中国香港节点', httpUrl: normalizeBaseUrl('https://api.poker.bd1bmc.xyz') },
-      { name: '中国北京节点', httpUrl: normalizeBaseUrl('http://39.105.107.234:3001') },
+      { name: '中国北京节点', httpUrl: normalizeBaseUrl('https://39.105.107.234:3001') },
     ]
   }, [])
 
@@ -252,10 +248,8 @@ export default function ServerSelect({ mode }: { mode: Mode }) {
         import_meta_env_DEV: import.meta.env.DEV 
       })
       
-      const apiBase = (isDev && isBeijing) ? '/beijing' : baseUrl
-      const wsBase = isDev && isBeijing 
-        ? `ws://${window.location.host}/beijing`
-        : baseUrl.replace(/^http/i, 'ws')
+      const apiBase = baseUrl
+      const wsBase = baseUrl.replace(/^http/i, 'ws')
       
       await runStep('ping', 1500, async () => {
         const res = await fetchWithTimeout(`${apiBase}/api/health`, 15000, { method: 'GET', signal: abortRef.current?.signal })

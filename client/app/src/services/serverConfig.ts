@@ -1,5 +1,5 @@
 const STORAGE_KEY = 'poker3.serverBaseUrl'
-const DEFAULT_SERVER_URL = 'https://api.poker.bd1bmc.xyz'
+const DEFAULT_SERVER_URL = 'https://39.105.107.234:3001'
 
 function isBeijingServer(baseUrl: string): boolean {
   return baseUrl.includes('39.105.107.234')
@@ -9,7 +9,7 @@ function isDevServer(): boolean {
   if (typeof window === 'undefined') return false
   const host = window.location.hostname
   const protocol = window.location.protocol
-  return (host === 'localhost' || host === '127.0.0.1' || host.startsWith('192.168.') || host.startsWith('10.')) && protocol === 'http:'
+  return (host === 'localhost' || host === '127.0.0.1' || host.startsWith('192.168.') || host.startsWith('10.'))
 }
 
 type Listener = (baseUrl: string) => void
@@ -103,10 +103,6 @@ export function getApiUrl(pathname: string) {
   const finalBase = getEffectiveBaseUrl(base)
   const p = pathname.startsWith('/') ? pathname : `/${pathname}`
   
-  if (isDevServer() && isBeijingServer(base)) {
-    return `/beijing${p}`
-  }
-  
   return `${finalBase}${p}`
 }
 
@@ -116,9 +112,12 @@ export function getWsUrl() {
   
   const finalBase = getEffectiveBaseUrl(base)
   
-  if (isDevServer() && isBeijingServer(base)) {
-    return `ws://${window.location.host}/beijing/ws`
+  if (finalBase.startsWith('https:')) {
+    const url = finalBase.replace('https:', 'wss:') + '/ws'
+    console.log('[getWsUrl] Generated WSS URL:', url)
+    return url
   }
-  
-  return finalBase.replace(/^http/i, 'ws') + '/ws'
+  const url = finalBase.replace('http:', 'ws:') + '/ws'
+  console.log('[getWsUrl] Generated WS URL:', url)
+  return url
 }

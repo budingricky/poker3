@@ -80,6 +80,7 @@ class SocketClient {
       return
     }
     if (!url) return
+    console.log('[Socket] Connecting to:', url)
 
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       if (this.currentUrl === url) return
@@ -118,6 +119,7 @@ class SocketClient {
     }, this.connectTimeout)
 
     this.ws.onopen = () => {
+      console.log('[Socket] Connected to:', this.currentUrl)
       window.clearTimeout(connectTimer)
       this.reconnectAttempts = 0
       this.lastOpenAt = Date.now()
@@ -156,7 +158,8 @@ class SocketClient {
       }
     }
 
-    this.ws.onclose = () => {
+    this.ws.onclose = (event) => {
+      console.log('[Socket] Disconnected:', event.code, event.reason)
       window.clearTimeout(connectTimer)
       this.stopHeartbeat()
       this.ws = null
@@ -173,7 +176,8 @@ class SocketClient {
       }
     }
 
-    this.ws.onerror = () => {
+    this.ws.onerror = (event) => {
+      console.error('[Socket] Error:', event)
     }
   }
 

@@ -29,17 +29,28 @@ const USE_HTTPS = certExists && keyExists
 
 if (USE_HTTPS) {
   console.log(`Using HTTPS with cert: ${SSL_CERT_PATH}`)
+} else {
+  console.log(`Using HTTP. Cert found: ${certExists}, Key found: ${keyExists}`)
+  if (!certExists) console.log(`Missing cert at: ${SSL_CERT_PATH}`)
+  if (!keyExists) console.log(`Missing key at: ${SSL_KEY_PATH}`)
 }
 
-const httpServer = USE_HTTPS
-  ? createHttpsServer(
-      {
-        cert: fs.readFileSync(SSL_CERT_PATH),
-        key: fs.readFileSync(SSL_KEY_PATH),
-      },
-      app,
-    )
-  : createHttpServer(app);
+let httpServer: ReturnType<typeof createHttpServer> | ReturnType<typeof createHttpsServer>;
+
+try {
+  httpServer = USE_HTTPS
+    ? createHttpsServer(
+        {
+          cert: fs.readFileSync(SSL_CERT_PATH),
+          key: fs.readFileSync(SSL_KEY_PATH),
+        },
+        app,
+      )
+    : createHttpServer(app);
+} catch (e) {
+  console.error('Failed to create server:', e)
+  process.exit(1)
+}
 let udpDiscovery: UdpDiscoveryHandle | null = null;
 
 // Initialize WebSocket Server
