@@ -27,6 +27,15 @@ function read(): string {
 export function normalizeBaseUrl(input: string): string {
   const trimmed = input.trim().replace(/\/+$/, '')
   if (!trimmed) return ''
+  
+  // 如果是HTTPS页面，强制将HTTP转换为HTTPS
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+    if (trimmed.startsWith('http://')) {
+      // 将http://替换为https://，保持端口不变
+      return trimmed.replace(/^http:\/\//i, 'https://')
+    }
+  }
+  
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed
   const hostPart = trimmed.split('/')[0] || ''
   const hostOnly = (hostPart.split(':')[0] || '').trim().toLowerCase()

@@ -20,6 +20,11 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
   const [wsReadyState, setWsReadyState] = useState<number | null>(null);
   const [holeCards, setHoleCards] = useState<any[]>([]);
   const [settlement, setSettlement] = useState<{ winnerId: string; winnerSide?: string } | null>(null);
+  const [finalSettlement, setFinalSettlement] = useState<{
+    initiatedBy: string;
+    confirmedPlayers: string[];
+  } | null>(null);
+  const [handOrder, setHandOrder] = useState<string[]>([]);
   const [settingMultiplier, setSettingMultiplier] = useState<number | null>(null)
   const [toast, setToast] = useState<string | null>(null);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
@@ -37,7 +42,7 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
   const lastFetchAtRef = useRef<number>(0);
   const myHandCount = Array.isArray(gameState?.myHand) ? gameState.myHand.length : 0
   const isNarrow = viewportWidth <= 480
-  const useTwoRows = isNarrow && myHandCount > 10
+  const useTwoRows = (isNarrow && myHandCount > 10) || (cardOverlap < -20)
   const cardSizeClass = isNarrow
     ? 'w-[clamp(3.1rem,10vw,4.2rem)] h-[clamp(4.4rem,14vw,6.0rem)]'
     : 'w-20 h-28'
@@ -148,6 +153,82 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
   const canBeatTable = !mustFollow ? true : canAnyBeat(gameState?.myHand || [], gameState?.lastMove)
   const cannotBeatTable = mustFollow && !canBeatTable
 
+  const sortHandBySuitAndRank = (hand: any[]): any[] => {
+    const suitOrder: Record<string, number> = { 'S': 0, 'H': 1, 'C': 2, 'D': 3, 'J': 4 };
+
+    const getSuit = (card: any) => String(card?.suit || card?.code?.[0] || '');
+    const rankPriority = new Map<number, number>([
+      [3, 0],
+      [15, 1],
+      [14, 2],
+      [13, 3],
+      [12, 4],
+      [11, 5],
+      [10, 6],
+      [9, 7],
+      [8, 8],
+      [7, 9],
+      [6, 10],
+      [5, 11],
+      [4, 12],
+    ]);
+
+    const getRank = (card: any) => {
+      if (typeof card?.rank === 'number') return card.rank;
+      const raw = String(card?.code || '').slice(1);
+      if (raw === 'B') return 16;
+      if (raw === 'R') return 17;
+      const parsed = parseInt(raw, 10);
+      return Number.isNaN(parsed) ? 0 : parsed;
+    };
+    const getRankOrder = (card: any) => rankPriority.get(getRank(card)) ?? 99;
+
+    return [...hand].sort((a, b) => {
+      const rankA = getRankOrder(a);
+      const rankB = getRankOrder(b);
+      if (rankA !== rankB) return rankA - rankB;
+      const suitA = getSuit(a);
+      const suitB = getSuit(b);
+      const orderA = suitOrder[suitA] ?? 99;
+      const orderB = suitOrder[suitB] ?? 99;
+      return orderA - orderB;
+    });
+  };
+
+  const autoArrangeHand = () => {
+    if (!gameState?.myHand) return;
+    const sorted = sortHandBySuitAndRank(gameState.myHand);
+    const sortedCodes = sorted.map(card => card.code);
+    setHandOrder(sortedCodes);
+    setToast('手牌已自动排序');
+  };
+
+  const getSortedHand = () => {
+    if (!gameState?.myHand) return [];
+    if (handOrder.length === 0) return gameState.myHand;
+    
+    // 按handOrder排序手牌
+    const handMap = new Map(gameState.myHand.map((card: any) => [card.code, card]));
+    const sorted: any[] = [];
+    
+    for (const code of handOrder) {
+      if (handMap.has(code)) {
+        sorted.push(handMap.get(code));
+        handMap.delete(code);
+      }
+    }
+    
+    // 添加handOrder中未包含的新牌（如果有）
+    if (handMap.size > 0) {
+      sorted.push(...Array.from(handMap.values()));
+      // 只将新牌添加到handOrder末尾，保持现有顺序
+      const newCards = Array.from(handMap.keys()) as string[];
+      setHandOrder(prev => [...prev, ...newCards]);
+    }
+    
+    return sorted;
+  };
+
   const loadGameState = useCallback(async () => {
     const now = Date.now()
     if (now - lastFetchAtRef.current < 150) return
@@ -158,6 +239,30 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
       const res = await api.getGameState(roomId, playerId)
       if (res.success) {
         setGameState(res.data)
+        // 同步手牌顺序
+        const currentHand = Array.isArray(res.data?.myHand) ? res.data.myHand : []
+        const currentHandCodes = currentHand.map((c: any) => c.code)
+        
+        // 使用函数式更新以确保使用最新的handOrder状态
+        setHandOrder(prevOrder => {
+          if (prevOrder.length === 0) {
+            // 初始状态，使用默认顺序
+            return currentHandCodes
+          }
+          // 智能更新手牌顺序：保留现有顺序，移除已出的牌，添加新牌到末尾
+          const filteredOrder = prevOrder.filter(code => currentHandCodes.includes(code))
+          const newCards = currentHandCodes.filter(code => !prevOrder.includes(code))
+          const updatedOrder = [...filteredOrder, ...newCards]
+          
+          // 如果顺序有变化（长度不同或顺序不同），则更新
+          if (updatedOrder.length !== prevOrder.length || 
+              !updatedOrder.every((code, idx) => idx < prevOrder.length && prevOrder[idx] === code)) {
+            return updatedOrder
+          }
+          // 顺序无变化，返回原顺序
+          return prevOrder
+        })
+        
         if (res.data?.phase === 'TAKING_HOLE') {
           setHoleCards(Array.isArray(res.data?.holeCards) ? res.data.holeCards : [])
         } else {
@@ -258,6 +363,22 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
     socket.on('undo', onUndo);
     socket.on('bid_made', onBidMade);
     socket.on('room_update', onRoomUpdate);
+    socket.on('final_settlement_initiated', (data: any) => {
+      setFinalSettlement({
+        initiatedBy: data.initiatedBy,
+        confirmedPlayers: data.confirmedPlayers || []
+      });
+      setToast('房主已发起最终结算，请确认');
+    });
+    socket.on('final_settlement_confirmed', (data: any) => {
+      setFinalSettlement((prev) => prev ? {
+        ...prev,
+        confirmedPlayers: data.confirmedPlayers || []
+      } : null);
+      if (data.playerId === playerId) {
+        setToast('您已确认最终结算');
+      }
+    });
 
     socket.on('room_closed', onRoomClosed);
     socket.on('ws_open', onWsOpen);
@@ -451,9 +572,24 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
               cardsToPlay = [cardCode];
               setSelectedCards([cardCode]);
           }
-          handlePlay(cardsToPlay);
+      handlePlay(cardsToPlay);
+  } else if (Math.abs(info.offset.x) > 50) {
+      // 未触发出牌但水平移动足够大，调整手牌顺序
+      const index = handOrder.indexOf(cardCode);
+      if (index !== -1) {
+        const newHandOrder = [...handOrder];
+        // 根据拖拽方向移动牌：向右拖拽（正x）向右移动，向左拖拽（负x）向左移动
+        if (info.offset.x > 0 && index < newHandOrder.length - 1) {
+          // 向右移动：与右侧牌交换位置
+          [newHandOrder[index], newHandOrder[index + 1]] = [newHandOrder[index + 1], newHandOrder[index]];
+        } else if (info.offset.x < 0 && index > 0) {
+          // 向左移动：与左侧牌交换位置
+          [newHandOrder[index], newHandOrder[index - 1]] = [newHandOrder[index - 1], newHandOrder[index]];
+        }
+        setHandOrder(newHandOrder);
       }
-  };
+  }
+};
 
   if (!gameState) return (
       <div className="flex items-center justify-center h-screen bg-green-900 text-white">
@@ -488,6 +624,30 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
     } catch (e) {
     }
     navigate('/lan');
+  };
+
+  const handleInitiateFinalSettlement = async () => {
+    if (isActing) return;
+    setIsActing(true);
+    try {
+      const res = await api.initiateFinalSettlement(roomId, playerId);
+      if (!res.success) alert(res.error);
+      await loadGameState();
+    } finally {
+      setIsActing(false);
+    }
+  };
+
+  const handleConfirmFinalSettlement = async () => {
+    if (isActing) return;
+    setIsActing(true);
+    try {
+      const res = await api.confirmFinalSettlement(roomId, playerId);
+      if (!res.success) alert(res.error);
+      await loadGameState();
+    } finally {
+      setIsActing(false);
+    }
   };
 
   const handleNextRound = async () => {
@@ -549,9 +709,9 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
 
         {/* Persistent Hole Cards (Top Left) */}
         {gameState.initialHoleCards && gameState.initialHoleCards.length > 0 && ['PLAYING', 'SURRENDER'].includes(gameState.phase) && (
-            <div className="absolute left-[140px] top-3 flex flex-col items-start opacity-90 pointer-events-none z-20">
+            <div className="absolute left-[180px] top-3 flex flex-col items-start opacity-90 pointer-events-none z-20">
                 <div className="text-white/40 text-[10px] mb-0.5 ml-1">底牌</div>
-                <div className="flex gap-0.5 scale-50 origin-top-left">
+                <div className="flex gap-0.5 scale-75 origin-top-left">
                     {gameState.initialHoleCards.map((c: any) => (
                         <Card key={c.code} code={c.code} />
                     ))}
@@ -827,12 +987,21 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
 
       {/* Player Hand */}
       <div className="fixed bottom-0 left-0 right-0 z-30 bg-gradient-to-t from-black/70 to-transparent pb-safe">
+        <div className="px-4 pt-2 flex justify-end">
+          <button
+            onClick={autoArrangeHand}
+            disabled={!gameState?.myHand || gameState.myHand.length === 0}
+            className="mb-2 px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium"
+          >
+            自动理牌
+          </button>
+        </div>
         {selectedCards.length > 0 && (
           <div className="px-4 pt-2">
             <div className="text-white/70 text-xs mb-2">已选牌</div>
             <div className={`w-full ${useTwoRows ? '' : 'overflow-x-auto'}`}>
               <div className={`${useTwoRows ? 'flex flex-wrap justify-center gap-2 pb-2' : 'flex gap-2 min-w-max pb-2 px-2 justify-center'}`}>
-                {gameState.myHand
+                {getSortedHand()
                   .filter((c: any) => selectedCards.includes(c.code))
                   .map((card: any) => (
                     <motion.div
@@ -857,13 +1026,39 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
         )}
 
         {/* Hand Cards */}
-        <div ref={handContainerRef} className={`w-full overflow-hidden pb-2 pt-2 px-4 min-h-[110px]`}>
+        <div ref={handContainerRef} className={`w-full overflow-hidden pb-2 pt-2 px-4 ${useTwoRows ? 'min-h-[220px]' : 'min-h-[110px]'}`}>
           <AnimatePresence>
-            <div className="flex justify-center items-end h-full" style={{ width: '100%' }}>
-              {gameState.myHand
-                .filter((c: any) => !selectedCards.includes(c.code))
-                .map((card: any, idx: number) => {
-                  return (
+            {useTwoRows ? (
+              <div className="flex flex-wrap justify-center items-end gap-2 h-full">
+                {getSortedHand()
+                  .filter((c: any) => !selectedCards.includes(c.code))
+                  .map((card: any, idx: number) => (
+                    <motion.div
+                      key={card.code}
+                      layoutId={card.code}
+                      drag
+                      dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
+                      dragElastic={0.2}
+                      dragSnapToOrigin={true}
+                      onDragEnd={(e, info) => handleDragEnd(e, info, card.code)}
+                      onClick={() => toggleCard(card.code)}
+                      animate={{
+                        y: 0,
+                        zIndex: idx,
+                      }}
+                      whileHover={{ y: -10, zIndex: 100 }}
+                      whileDrag={{ scale: 1.06, zIndex: 100, cursor: 'grabbing' }}
+                      className="cursor-grab active:cursor-grabbing"
+                    >
+                      <Card code={card.code} selected={false} className={`shadow-2xl ${cardSizeClass}`} />
+                    </motion.div>
+                  ))}
+              </div>
+            ) : (
+              <div className="flex justify-center items-end h-full" style={{ width: '100%' }}>
+                {getSortedHand()
+                  .filter((c: any) => !selectedCards.includes(c.code))
+                  .map((card: any, idx: number) => (
                     <motion.div
                       key={card.code}
                       layoutId={card.code}
@@ -887,9 +1082,9 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
                     >
                       <Card code={card.code} selected={false} className={`shadow-2xl ${cardSizeClass}`} />
                     </motion.div>
-                  );
-                })}
-            </div>
+                  ))}
+              </div>
+            )}
           </AnimatePresence>
         </div>
         
@@ -1140,9 +1335,45 @@ export default function GameTable({ roomId, playerId }: GameTableProps) {
                 离开房间
               </button>
             </div>
+            {gameState?.hostId === playerId && 
+             typeof gameState?.playerCount === 'number' && 
+             typeof gameState?.maxPlayers === 'number' &&
+             gameState.playerCount < gameState.maxPlayers && (
+              <button
+                disabled={isActing}
+                onClick={handleInitiateFinalSettlement}
+                className="w-full mt-3 rounded-2xl bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-bold py-3 text-lg"
+              >
+                最终结算
+              </button>
+            )}
             <div className="text-sm text-slate-600 mt-3">
               准备人数：{Array.isArray(gameState?.nextRoundReady) ? gameState.nextRoundReady.length : 0}/{gameState?.maxPlayers || ((gameState?.otherPlayers?.length || 0) + 1)}
             </div>
+            {finalSettlement && (
+              <div className="mt-4 p-3 bg-purple-50 border border-purple-200 rounded-2xl">
+                <div className="font-bold text-purple-800 mb-2">最终结算确认</div>
+                <div className="text-sm text-purple-700 mb-2">
+                  发起者：{finalSettlement.initiatedBy === playerId ? '您' : '房主'}
+                </div>
+                <div className="text-sm text-purple-700 mb-3">
+                  已确认：{finalSettlement.confirmedPlayers.length}/{gameState?.maxPlayers || ((gameState?.otherPlayers?.length || 0) + 1)}
+                </div>
+                {!finalSettlement.confirmedPlayers.includes(playerId) ? (
+                  <button
+                    disabled={isActing}
+                    onClick={handleConfirmFinalSettlement}
+                    className="w-full rounded-2xl bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-bold py-3"
+                  >
+                    确认最终结算
+                  </button>
+                ) : (
+                  <div className="text-center text-purple-600 font-bold py-3">
+                    您已确认最终结算
+                  </div>
+                )}
+              </div>
+            )}
             {typeof gameState?.playerCount === 'number' &&
               typeof gameState?.maxPlayers === 'number' &&
               gameState.playerCount < gameState.maxPlayers && (

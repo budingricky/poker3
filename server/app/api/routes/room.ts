@@ -306,6 +306,36 @@ router.post('/confirm_continue', (req: Request, res: Response) => {
   }
 })
 
+// Initiate Final Settlement (Host only)
+router.post('/initiate_final_settlement', (req: Request, res: Response) => {
+  try {
+    const { roomId, playerId } = req.body
+    if (!roomId || !playerId) {
+      res.status(400).json({ success: false, error: '缺少必要参数' })
+      return
+    }
+    gameService.initiateFinalSettlement(roomId, playerId)
+    res.json({ success: true, data: { status: 'initiated' } })
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: error.message })
+  }
+})
+
+// Confirm Final Settlement
+router.post('/confirm_final_settlement', (req: Request, res: Response) => {
+  try {
+    const { roomId, playerId } = req.body
+    if (!roomId || !playerId) {
+      res.status(400).json({ success: false, error: '缺少必要参数' })
+      return
+    }
+    gameService.confirmFinalSettlement(roomId, playerId)
+    res.json({ success: true, data: { status: 'confirmed' } })
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: error.message })
+  }
+})
+
 // Get room details
 router.get('/:roomId', (req: Request, res: Response) => {
   try {

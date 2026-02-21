@@ -35,7 +35,13 @@ export function useTRTC(roomId: string, playerId: string) {
 
   const leave = useCallback(async () => {
     if (localStreamRef.current) {
-      localStreamRef.current.close();
+      const streamToUnpublish = localStreamRef.current;
+      if (clientRef.current) {
+        try {
+          await clientRef.current.unpublish(streamToUnpublish);
+        } catch(e) {}
+      }
+      streamToUnpublish.close();
       localStreamRef.current = null;
     }
     if (clientRef.current) {
@@ -65,6 +71,15 @@ export function useTRTC(roomId: string, playerId: string) {
       }
 
       if (force && clientRef.current) {
+        // 清理现有流
+        if (localStreamRef.current) {
+          const streamToUnpublish = localStreamRef.current;
+          try {
+            await clientRef.current.unpublish(streamToUnpublish);
+          } catch(e) {}
+          streamToUnpublish.close();
+          localStreamRef.current = null;
+        }
         try {
           await clientRef.current.leave();
         } catch (e) {}
@@ -137,7 +152,26 @@ export function useTRTC(roomId: string, playerId: string) {
       client.enableAudioVolumeEvaluation(200);
 
       if (joinedRef.current) return;
-      await client.join({ roomId: finalRoomId });
+      
+      // 加入房间，最多重试3次
+      let joinError: any = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await client.join({ roomId: finalRoomId });
+          joinError = null;
+          break;
+        } catch (e) {
+          joinError = e;
+          if (attempt < 3) {
+            await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+          }
+        }
+      }
+      
+      if (joinError) {
+        throw joinError;
+      }
+      
       if (mountedRef.current) {
         setIsJoined(true);
         setStatus('joined');
@@ -186,15 +220,26 @@ export function useTRTC(roomId: string, playerId: string) {
 
     if (micEnabled) {
         if (localStreamRef.current) {
-            localStreamRef.current.close();
-            localStreamRef.current = null;
+            const streamToUnpublish = localStreamRef.current;
             try {
-                await clientRef.current.unpublish();
+                await clientRef.current.unpublish(streamToUnpublish);
             } catch(e) {}
+            streamToUnpublish.close();
+            localStreamRef.current = null;
         }
         setMicEnabled(false);
     } else {
         try {
+            // 确保任何现有流都已清理
+            if (localStreamRef.current) {
+                const streamToUnpublish = localStreamRef.current;
+                try {
+                    await clientRef.current.unpublish(streamToUnpublish);
+                } catch(e) {}
+                streamToUnpublish.close();
+                localStreamRef.current = null;
+            }
+            
             const hasGum = !!(navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function')
             if (!hasGum) {
                 setMicPermission('denied')

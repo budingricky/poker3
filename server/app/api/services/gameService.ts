@@ -35,6 +35,14 @@ class GameService {
       createdAt: number
     }>
   > = new Map()
+  private finalSettlementByRoom: Map<
+    string,
+    {
+      initiatedBy: string
+      confirmedPlayers: Set<string>
+      createdAt: number
+    }
+  > = new Map()
   private undoByRoom: Map<
     string,
     {
@@ -155,16 +163,20 @@ class GameService {
     this.games.delete(roomId)
     this.nextRoundReadyByRoom.delete(roomId)
     this.undoByRoom.delete(roomId)
-    this.lastWinnerByRoom.delete(roomId)
-    this.settlementHistoryByRoom.delete(roomId)
+    // 保留 lastWinnerByRoom，以便知道上一局赢家
+    // this.lastWinnerByRoom.delete(roomId)
+    // 保留 settlementHistoryByRoom，以便显示计分表
+    // this.settlementHistoryByRoom.delete(roomId)
     this.pendingSettlementByRoom.delete(roomId)
     this.settlementMultiplierByRoom.delete(roomId)
+    this.finalSettlementByRoom.delete(roomId)
     const room = roomService.getRoom(roomId)
     if (room) {
       room.status = RoomStatus.WAITING
       for (const p of room.players) {
         p.handCards = []
-        p.score = 0
+        // 保留玩家累计分数，不清零
+        // p.score = 0
       }
     }
   }
@@ -708,6 +720,65 @@ class GameService {
     this.startGame(roomId)
   }
 
+  initiateFinalSettlement(roomId: string, playerId: string) {
+    const room = roomService.getRoom(roomId)
+    if (!room) throw new Error('房间未找到')
+    if (room.status !== RoomStatus.FINISHED) throw new Error('当前不在结算阶段')
+    if (room.hostId !== playerId) throw new Error('仅房主可发起最终结算')
+    
+    // 检查是否有玩家退出
+    const onlineCount = room.players.filter(p => p.isOnline).length
+    if (onlineCount >= room.maxPlayers) throw new Error('所有玩家都在线，无需最终结算')
+
+    // 初始化最终结算状态
+    this.finalSettlementByRoom.set(roomId, {
+      initiatedBy: playerId,
+      confirmedPlayers: new Set([playerId]), // 房主自动确认
+      createdAt: Date.now()
+    })
+
+    socketService.broadcast(roomId, 'final_settlement_initiated', {
+      initiatedBy: playerId,
+      confirmedPlayers: [playerId]
+    })
+    socketService.broadcast(roomId, 'room_update')
+    socketService.broadcast(roomId, 'game_update')
+  }
+
+  confirmFinalSettlement(roomId: string, playerId: string) {
+    const room = roomService.getRoom(roomId)
+    if (!room) throw new Error('房间未找到')
+    if (room.status !== RoomStatus.FINISHED) throw new Error('当前不在结算阶段')
+    
+    const finalSettlement = this.finalSettlementByRoom.get(roomId)
+    if (!finalSettlement) throw new Error('未发起最终结算')
+
+    // 添加玩家确认
+    finalSettlement.confirmedPlayers.add(playerId)
+    this.finalSettlementByRoom.set(roomId, finalSettlement)
+
+    // 广播确认更新
+    socketService.broadcast(roomId, 'final_settlement_confirmed', {
+      playerId,
+      confirmedPlayers: Array.from(finalSettlement.confirmedPlayers)
+    })
+
+    // 检查是否所有在线玩家都已确认
+    const onlinePlayers = room.players.filter(p => p.isOnline)
+    const allConfirmed = onlinePlayers.every(p => finalSettlement.confirmedPlayers.has(p.id))
+    
+    if (allConfirmed) {
+      // 所有玩家确认，解散房间
+      this.finalSettlementByRoom.delete(roomId)
+      roomService.closeRoom(roomId, finalSettlement.initiatedBy)
+      socketService.broadcast(roomId, 'room_closed')
+      socketService.broadcastLobby('room_update')
+    } else {
+      socketService.broadcast(roomId, 'room_update')
+      socketService.broadcast(roomId, 'game_update')
+    }
+  }
+
   setSettlementMultiplier(roomId: string, playerId: string, multiplier: number) {
     const room = roomService.getRoom(roomId)
     if (!room) throw new Error('房间未找到')
@@ -799,6 +870,7 @@ class GameService {
     this.undoByRoom.delete(roomId)
     this.lastWinnerByRoom.delete(roomId)
     this.settlementHistoryByRoom.delete(roomId)
+    this.finalSettlementByRoom.delete(roomId)
   }
 
   addBot(roomId: string) {

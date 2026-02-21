@@ -25,12 +25,12 @@ export default defineConfig(({ command, mode }) => {
       strictPort: false,
       proxy: {
         '/api': {
-          target: 'http://localhost:3001',
+          target: 'https://localhost:3001',
           secure: false,
           changeOrigin: true,
         },
         '/ws': {
-          target: 'ws://localhost:3001',
+          target: 'wss://localhost:3001',
           secure: false,
           ws: true,
           changeOrigin: true,

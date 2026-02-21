@@ -1,4 +1,5 @@
 import { getApiUrl } from './serverConfig'
+import { Product } from '../types'
 
 const DEFAULT_TIMEOUT = 30000
 const MAX_RETRIES = 3
@@ -111,6 +112,20 @@ export const api = {
       body: JSON.stringify({ roomId, playerId }),
     })
   },
+  initiateFinalSettlement: async (roomId: string, playerId: string) => {
+    return fetchJson('/api/room/initiate_final_settlement', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId, playerId }),
+    })
+  },
+  confirmFinalSettlement: async (roomId: string, playerId: string) => {
+    return fetchJson('/api/room/confirm_final_settlement', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId, playerId }),
+    })
+  },
   playCards: async (roomId: string, playerId: string, cards: string[]) => {
     return fetchJson('/api/room/play', {
       method: 'POST',
@@ -158,6 +173,44 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId }),
+    })
+  },
+  getProducts: async () => {
+    // 模拟产品数据，避免调用未部署的支付接口
+    return Promise.resolve({
+      success: true,
+      data: [
+        { id: 'coin_100', name: '100游戏币', description: '可用于购买头像、主题等', price: 600, currency: 'CNY', type: 'coin', icon: '💰' },
+        { id: 'coin_500', name: '500游戏币', description: '超值礼包', price: 3000, currency: 'CNY', type: 'coin', icon: '💎' },
+        { id: 'coin_1000', name: '1000游戏币', description: '豪华礼包，额外赠送100币', price: 5000, currency: 'CNY', type: 'coin', icon: '🎁' },
+        { id: 'avatar_1', name: '炫酷头像', description: '专属稀有头像', price: 1500, currency: 'CNY', type: 'avatar', icon: '👑' },
+        { id: 'theme_dark', name: '暗黑主题', description: '深色界面主题', price: 2000, currency: 'CNY', type: 'theme', icon: '🎨' },
+        { id: 'vip_30', name: 'VIP月卡', description: '30天VIP特权', price: 3000, currency: 'CNY', type: 'vip', icon: '⭐' },
+      ] as Product[]
+    })
+  },
+  createOrder: async (productId: string, paymentMethod: 'wechat' | 'alipay') => {
+    // 模拟订单创建，避免调用未部署的支付接口
+    const orderId = 'mock_order_' + Date.now()
+    return Promise.resolve({
+      success: true,
+      data: {
+        orderId,
+        paymentUrl: `https://example.com/payment/${orderId}`,
+        qrCodeUrl: `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`mock://payment/${orderId}`)}`,
+        status: 'pending'
+      }
+    })
+  },
+  checkOrderStatus: async (orderId: string) => {
+    // 模拟订单状态查询，避免调用未部署的支付接口
+    return Promise.resolve({
+      success: true,
+      data: {
+        orderId,
+        status: orderId.includes('mock') ? 'paid' : 'pending',
+        paidAt: Date.now()
+      }
     })
   },
 }

@@ -139,7 +139,7 @@ export default function Room() {
   })
 
   return (
-    <div className="p-4 max-w-5xl mx-auto">
+    <div className="p-3 md:p-4 max-w-5xl mx-auto">
       <div className="flex items-start justify-between gap-4 mb-6">
         <div>
           <div className="text-sm text-gray-500">局域网服务器</div>
@@ -151,7 +151,7 @@ export default function Room() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         {seats.map((player, idx) =>
           player ? (
             <div key={player.id} className="bg-white p-4 rounded-2xl shadow text-center border">
@@ -159,6 +159,9 @@ export default function Room() {
                 {player.name[0].toUpperCase()}
               </div>
               <div className="font-semibold">{player.name}</div>
+              <div className={`text-sm font-bold ${player.score >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                分数: {player.score}
+              </div>
               {player.id === room.hostId && <div className="text-xs text-orange-500">房主</div>}
               {player.id === playerId && <div className="text-xs text-green-500">（你）</div>}
             </div>

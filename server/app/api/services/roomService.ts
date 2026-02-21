@@ -79,7 +79,8 @@ class RoomService {
     emptySeat.isOnline = true
     emptySeat.joinedAt = Date.now()
     emptySeat.handCards = []
-    emptySeat.score = 0
+    // 保留原有分数，实现分数继承
+    // emptySeat.score 保持不变
     return { player: emptySeat, room }
   }
 
@@ -99,7 +100,6 @@ class RoomService {
           if (player) {
             player.isOnline = false
             player.handCards = []
-            player.score = 0
           }
 
           const online = room.players.filter(p => p.isOnline)

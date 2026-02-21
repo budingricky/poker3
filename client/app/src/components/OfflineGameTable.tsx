@@ -523,6 +523,22 @@ export default function OfflineGameTable({ engine, aiMode, deepseekApiKey, onExi
       ? settlement.winnerId === gameState.diggerId
       : false
 
+  // 计分表数据计算
+  const settlementHistory = Array.isArray(gameState?.settlementHistory) ? gameState.settlementHistory : []
+  const settlementHeaders = settlementHistory.length > 0 && Array.isArray(settlementHistory[0]?.results) 
+    ? settlementHistory[0].results 
+    : []
+  const settlementTotals = settlementHeaders.reduce((acc: any, r: any) => {
+    acc[r.playerId] = 0
+    return acc
+  }, {} as any)
+  settlementHistory.forEach((row: any) => {
+    ;(row?.results || []).forEach((r: any) => {
+      if (typeof r?.playerId !== 'string') return
+      settlementTotals[r.playerId] = (settlementTotals[r.playerId] || 0) + (Number(r?.delta) || 0)
+    })
+  })
+
   const handleDragEnd = (_event: any, info: any, cardCode: string) => {
     if (info.offset.y < -150) {
       if (cannotBeatTable) {
@@ -950,9 +966,71 @@ export default function OfflineGameTable({ engine, aiMode, deepseekApiKey, onExi
               <div className="text-slate-700 mb-2">
                 胜者：<span className="font-bold text-slate-900">{winnerName}</span>
               </div>
-              <div className={`mb-6 font-bold ${isDiggerWin ? 'text-purple-700' : 'text-green-700'}`}>
+              <div className={`mb-2 font-bold ${isDiggerWin ? 'text-purple-700' : 'text-green-700'}`}>
                 胜方：{isDiggerWin ? '坑主方' : '对抗方'}
               </div>
+              {settlementHistory.length > 0 && settlementHeaders.length > 0 && (
+                <div className="mb-5">
+                  <div className="text-sm font-bold text-slate-800 mb-2">记分表</div>
+                  <div className="overflow-auto max-h-[40vh] rounded-2xl border border-slate-200 bg-white">
+                    <table className="w-full text-[11px]">
+                      <thead className="sticky top-0 bg-white">
+                        <tr className="text-slate-600">
+                          <th className="text-left px-2 py-2 border-b border-slate-200">局</th>
+                          {settlementHeaders.map((p: any) => (
+                            <th key={p.playerId} className="text-right px-2 py-2 border-b border-slate-200 whitespace-nowrap">
+                              {p.name}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {settlementHistory.map((row: any) => (
+                          <tr key={String(row.round)} className="text-slate-800">
+                            <td className="px-2 py-2 border-b border-slate-100 whitespace-nowrap">
+                              第{row.round}局
+                            </td>
+                            {settlementHeaders.map((h: any) => {
+                              const r = (row?.results || []).find((x: any) => x?.playerId === h.playerId)
+                              const delta = Number(r?.delta) || 0
+                              const isWinnerCell = !!r?.isWinner
+                              return (
+                                <td
+                                  key={h.playerId}
+                                  className={[
+                                    'px-2 py-2 border-b border-slate-100 text-right font-mono whitespace-nowrap',
+                                    delta > 0 ? 'text-green-700' : delta < 0 ? 'text-red-700' : 'text-slate-700',
+                                  ].join(' ')}
+                                >
+                                  {delta > 0 ? `+${delta}` : String(delta)}
+                                  {isWinnerCell ? <span className="ml-1 font-bold text-slate-700">胜</span> : <span className="ml-1 text-slate-400">负</span>}
+                                </td>
+                              )
+                            })}
+                          </tr>
+                        ))}
+                        <tr className="font-bold">
+                          <td className="px-2 py-2">合计</td>
+                          {settlementHeaders.map((h: any) => {
+                            const total = Number(settlementTotals[h.playerId]) || 0
+                            return (
+                              <td
+                                key={h.playerId}
+                                className={[
+                                  'px-2 py-2 text-right font-mono whitespace-nowrap',
+                                  total > 0 ? 'text-green-700' : total < 0 ? 'text-red-700' : 'text-slate-700',
+                                ].join(' ')}
+                              >
+                                {total > 0 ? `+${total}` : String(total)}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <button
                   disabled={isActing}

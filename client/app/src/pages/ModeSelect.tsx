@@ -15,7 +15,7 @@ export default function ModeSelect() {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-4 md:p-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between gap-4 mb-6">
         <div>
           <div className="text-3xl font-extrabold text-green-800">Poker3</div>
@@ -24,7 +24,7 @@ export default function ModeSelect() {
         {saved ? (
           <button
             onClick={handleDisconnect}
-            className="rounded-full bg-white/80 hover:bg-white px-4 py-2 shadow-sm ring-1 ring-gray-200 text-gray-800 font-semibold"
+            className="rounded-full bg-white/80 hover:bg-white px-4 py-2 shadow-sm ring-1 ring-gray-200 text-gray-800 font-semibold min-h-[44px]"
           >
             断开服务器
           </button>
@@ -37,7 +37,7 @@ export default function ModeSelect() {
           <div className="text-gray-600 mb-4">选择服务器后进入联机大厅。</div>
           <Link
             to="/online"
-            className="inline-flex items-center justify-center w-full rounded-xl bg-gray-100 hover:bg-gray-200 px-4 py-2 font-semibold"
+            className="inline-flex items-center justify-center w-full rounded-xl bg-gray-100 hover:bg-gray-200 px-4 py-2 font-semibold min-h-[44px]"
           >
             进入
           </Link>
@@ -48,7 +48,7 @@ export default function ModeSelect() {
           <div className="text-gray-600 mb-4">单机练习与人机对战。</div>
           <Link
             to="/offline"
-            className="inline-flex items-center justify-center w-full rounded-xl bg-gray-100 hover:bg-gray-200 px-4 py-2 font-semibold"
+            className="inline-flex items-center justify-center w-full rounded-xl bg-gray-100 hover:bg-gray-200 px-4 py-2 font-semibold min-h-[44px]"
           >
             进入
           </Link>
@@ -61,7 +61,7 @@ export default function ModeSelect() {
           </div>
           <Link
             to="/server-select/lan"
-            className="inline-flex items-center justify-center w-full rounded-xl bg-gray-100 hover:bg-gray-200 px-4 py-2 font-semibold"
+            className="inline-flex items-center justify-center w-full rounded-xl bg-gray-100 hover:bg-gray-200 px-4 py-2 font-semibold min-h-[44px]"
           >
             进入
           </Link>

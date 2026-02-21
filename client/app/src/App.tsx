@@ -6,6 +6,7 @@ import Offline from './pages/Offline'
 import ServerSelect from './pages/ServerSelect'
 import Lobby from './pages/Lobby'
 import Room from './pages/Room'
+import Shop from './pages/Shop'
 import './index.css'
 
 const BGM_ENABLED_KEY = 'poker3.bgmEnabled'
@@ -211,6 +212,7 @@ function App() {
           <Route path="/server-select/lan" element={<ServerSelect mode="lan" />} />
           <Route path="/lan" element={<Lobby />} />
           <Route path="/lan/room/:roomId" element={<Room />} />
+          <Route path="/shop" element={<Shop />} />
           <Route path="/room/:roomId" element={<LegacyRoomRedirect />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

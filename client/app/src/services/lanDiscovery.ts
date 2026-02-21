@@ -50,7 +50,8 @@ async function discoverViaHttpScan({
   maxConcurrency?: number
 }) {
   const candidates: string[] = []
-  const schemes: Array<'https' | 'http'> = window.location.protocol === 'https:' ? ['https', 'http'] : ['http', 'https']
+  const isHttpsPage = window.location.protocol === 'https:'
+  const schemes: Array<'https' | 'http'> = isHttpsPage ? ['https'] : ['http', 'https']
   const ports = [3001, 8080]
 
   for (const scheme of schemes) candidates.push(`${scheme}://localhost:3001`)

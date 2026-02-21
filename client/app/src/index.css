@@ -57,3 +57,33 @@
   background: rgba(255, 255, 255, 0.2);
   border-radius: 9999px;
 }
+
+/* 响应式触摸优化 */
+@media (max-width: 768px) {
+  button:not(.no-touch-opt),
+  a:not(.no-touch-opt),
+  input[type="button"],
+  input[type="submit"],
+  input[type="reset"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  
+  /* 提高移动端字体可读性 */
+  html {
+    font-size: 16px;
+  }
+  
+  /* 避免移动端横向滚动 */
+  body {
+    overflow-x: hidden;
+  }
+}
+
+/* 防止长按出现复制菜单 */
+button, a {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}

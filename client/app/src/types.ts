@@ -25,3 +25,26 @@ export interface Room {
   players: Player[];
   createdAt: number;
 }
+
+export interface Product {
+  id: string;
+  name: string;
+  description: string;
+  price: number; // 人民币分
+  currency: 'CNY';
+  type: 'coin' | 'avatar' | 'theme' | 'vip';
+  icon: string;
+}
+
+export interface PurchaseRequest {
+  productId: string;
+  paymentMethod: 'wechat' | 'alipay';
+  redirectUrl?: string;
+}
+
+export interface PurchaseResult {
+  orderId: string;
+  paymentUrl: string;
+  qrCodeUrl?: string;
+  status: 'pending' | 'paid' | 'failed';
+}
